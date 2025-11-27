@@ -6,7 +6,7 @@ import Layout from '@/components/Layout';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 
-// Placeholder pages (you can create these later)
+// Placeholder pages 
 const ExamsPage = () => (
   <div className="p-6">
     <h1 className="text-2xl font-bold mb-4">Exams</h1>

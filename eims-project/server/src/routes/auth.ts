@@ -7,10 +7,10 @@ import {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
-} from '../middleware/auth.js';
-import { loginValidator, refreshTokenValidator } from '../middleware/validation.js';
-import { createAuditLog } from '../middleware/audit.js';
-import logger from '../utils/logger.js';
+} from '../middleware/auth';
+import { loginValidator, refreshTokenValidator } from '../middleware/validation';
+import { createAuditLog } from '../middleware/audit';
+import logger from '../utils/logger';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -93,13 +93,21 @@ router.post('/login', loginValidator, async (req: Request, res: Response): Promi
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
 
-    // Store refresh token in database
-    await prisma.refreshToken.create({
-      data: {
-        token: refreshToken,
-        userId: user.id,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-      },
+    // Store refresh token - use transaction to ensure atomicity
+    await prisma.$transaction(async (tx) => {
+      // Delete all existing refresh tokens for this user
+      await tx.refreshToken.deleteMany({
+        where: { userId: user.id },
+      });
+      
+      // Create new refresh token
+      await tx.refreshToken.create({
+        data: {
+          token: refreshToken,
+          userId: user.id,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        },
+      });
     });
 
     // Log successful login
@@ -136,11 +144,18 @@ router.post('/login', loginValidator, async (req: Request, res: Response): Promi
     });
   } catch (error) {
     logger.error('Login error:', error);
+    // Log the actual error details
+    if (error instanceof Error) {
+      logger.error('Error name:', error.name);
+      logger.error('Error message:', error.message);
+      logger.error('Error stack:', error.stack);
+    }
     res.status(500).json({
       success: false,
       error: {
         code: 'INTERNAL_ERROR',
         message: 'An error occurred during login',
+        details: process.env.NODE_ENV === 'development' ? String(error) : undefined,
       },
     });
   }

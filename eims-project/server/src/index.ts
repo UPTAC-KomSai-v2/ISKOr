@@ -5,19 +5,19 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 
-import config from './config/index.js';
-import logger from './utils/logger.js';
-import { auditMiddleware } from './middleware/audit.js';
-import wsService from './services/websocket.js';
+import config from './config/index';
+import logger from './utils/logger';
+import { auditMiddleware } from './middleware/audit';
+import wsService from './services/websocket';
 
 // Route imports
-import authRoutes from './routes/auth.js';
-import examRoutes from './routes/exams.js';
-import scheduleRoutes from './routes/schedules.js';
-import announcementRoutes from './routes/announcements.js';
-import resultRoutes from './routes/results.js';
-import studentRoutes from './routes/students.js';
-import notificationRoutes from './routes/notifications.js';
+import authRoutes from './routes/auth';
+import examRoutes from './routes/exams';
+import scheduleRoutes from './routes/schedules';
+import announcementRoutes from './routes/announcements';
+import resultRoutes from './routes/results';
+import studentRoutes from './routes/students';
+import notificationRoutes from './routes/notifications';
 
 // ============================================
 // Express App Setup

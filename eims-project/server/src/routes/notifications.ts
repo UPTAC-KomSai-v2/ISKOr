@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { authenticate } from '../middleware/auth.js';
-import { paginationValidator, idParamValidator } from '../middleware/validation.js';
-import notificationService from '../services/notification.js';
-import logger from '../utils/logger.js';
+import { authenticate } from '../middleware/auth';
+import { paginationValidator, idParamValidator } from '../middleware/validation';
+import notificationService from '../services/notification';
+import logger from '../utils/logger';
 
 const router = Router();
 

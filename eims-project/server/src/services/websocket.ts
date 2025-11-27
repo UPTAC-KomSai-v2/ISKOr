@@ -2,9 +2,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
-import config from '../config/index.js';
-import logger from '../utils/logger.js';
-import { JwtPayload } from '../middleware/auth.js';
+import config from '../config/index';
+import logger from '../utils/logger';
+import { JwtPayload } from '../middleware/auth';
 
 // ============================================
 // Types & Interfaces

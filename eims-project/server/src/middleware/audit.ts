@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
-import logger from '../utils/logger.js';
+import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 

@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { PrismaClient, Role } from '@prisma/client';
-import config from '../config/index.js';
-import logger from '../utils/logger.js';
+import config from '../config/index';
+import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -153,11 +153,37 @@ export const authorize = (...allowedRoles: Role[]) => {
 };
 
 /**
+ * Parse duration string to seconds (e.g., '15m' -> 900, '7d' -> 604800)
+ */
+const parseDuration = (duration: string): number => {
+  const match = duration.match(/^(\d+)([smhd])$/);
+  if (!match) return 900; // default 15 minutes
+  
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+  
+  switch (unit) {
+    case 's': return value;
+    case 'm': return value * 60;
+    case 'h': return value * 60 * 60;
+    case 'd': return value * 60 * 60 * 24;
+    default: return 900;
+  }
+};
+
+/**
+ * Generate a unique token ID
+ */
+const generateTokenId = (): string => {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+};
+
+/**
  * Generate JWT access token
  */
 export const generateAccessToken = (payload: Omit<JwtPayload, 'iat' | 'exp'>): string => {
-  return jwt.sign(payload, config.jwt.secret, {
-    expiresIn: config.jwt.expiresIn,
+  return jwt.sign({ ...payload, jti: generateTokenId() }, config.jwt.secret, {
+    expiresIn: parseDuration(config.jwt.expiresIn),
   });
 };
 
@@ -165,8 +191,8 @@ export const generateAccessToken = (payload: Omit<JwtPayload, 'iat' | 'exp'>): s
  * Generate JWT refresh token
  */
 export const generateRefreshToken = (payload: Omit<JwtPayload, 'iat' | 'exp'>): string => {
-  return jwt.sign(payload, config.jwt.refreshSecret, {
-    expiresIn: config.jwt.refreshExpiresIn,
+  return jwt.sign({ ...payload, jti: generateTokenId() }, config.jwt.refreshSecret, {
+    expiresIn: parseDuration(config.jwt.refreshExpiresIn),
   });
 };
 

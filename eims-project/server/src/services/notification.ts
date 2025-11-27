@@ -1,6 +1,6 @@
 import { PrismaClient, Notification, Role } from '@prisma/client';
-import wsService from './websocket.js';
-import logger from '../utils/logger.js';
+import wsService from './websocket';
+import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 

@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient, Role } from '@prisma/client';
-import { authenticate, authorize } from '../middleware/auth.js';
-import { createScheduleValidator, idParamValidator } from '../middleware/validation.js';
-import { logEntityChange } from '../middleware/audit.js';
-import notificationService from '../services/notification.js';
-import logger from '../utils/logger.js';
+import { authenticate, authorize } from '../middleware/auth';
+import { createScheduleValidator, idParamValidator } from '../middleware/validation';
+import { logEntityChange } from '../middleware/audit';
+import notificationService from '../services/notification';
+import logger from '../utils/logger';
 
 const router = Router();
 const prisma = new PrismaClient();

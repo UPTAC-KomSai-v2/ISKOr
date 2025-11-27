@@ -22,7 +22,7 @@ interface UseWebSocketReturn {
   disconnect: () => void;
 }
 
-const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`;
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001/ws';
 
 export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketReturn => {
   const {
@@ -37,10 +37,41 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectCountRef = useRef(0);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const isConnectingRef = useRef(false);
+
+  // Store callbacks in refs to avoid re-creating connect function
+  const onMessageRef = useRef(onMessage);
+  const onConnectRef = useRef(onConnect);
+  const onDisconnectRef = useRef(onDisconnect);
+  const onErrorRef = useRef(onError);
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    onConnectRef.current = onConnect;
+    onDisconnectRef.current = onDisconnect;
+    onErrorRef.current = onError;
+  }, [onMessage, onConnect, onDisconnect, onError]);
 
   const [status, setStatus] = useState<WSConnectionStatus>('disconnected');
   const { accessToken, isAuthenticated } = useAuthStore();
+
+  // Disconnect from WebSocket
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = undefined;
+    }
+    
+    if (wsRef.current) {
+      wsRef.current.close(1000, 'User disconnected');
+      wsRef.current = null;
+    }
+    
+    isConnectingRef.current = false;
+    setStatus('disconnected');
+  }, []);
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -49,11 +80,23 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
       return;
     }
 
+    // Prevent multiple simultaneous connections
+    if (isConnectingRef.current) {
+      console.log('WebSocket: Already connecting, skipping');
+      return;
+    }
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       console.log('WebSocket: Already connected');
       return;
     }
 
+    if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+      console.log('WebSocket: Connection in progress');
+      return;
+    }
+
+    isConnectingRef.current = true;
     setStatus('connecting');
     console.log('WebSocket: Connecting...');
 
@@ -63,7 +106,8 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
       console.log('WebSocket: Connected');
       setStatus('connected');
       reconnectCountRef.current = 0;
-      onConnect?.();
+      isConnectingRef.current = false;
+      onConnectRef.current?.();
     };
 
     ws.onmessage = (event) => {
@@ -79,7 +123,7 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
           }));
         }
 
-        onMessage?.(message);
+        onMessageRef.current?.(message);
       } catch (error) {
         console.error('WebSocket: Failed to parse message', error);
       }
@@ -89,10 +133,11 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
       console.log('WebSocket: Disconnected', event.code, event.reason);
       setStatus('disconnected');
       wsRef.current = null;
-      onDisconnect?.();
+      isConnectingRef.current = false;
+      onDisconnectRef.current?.();
 
-      // Attempt reconnection
-      if (reconnectCountRef.current < reconnectAttempts && isAuthenticated) {
+      // Attempt reconnection only if we didn't deliberately close
+      if (event.code !== 1000 && reconnectCountRef.current < reconnectAttempts && isAuthenticated) {
         reconnectCountRef.current++;
         const delay = reconnectInterval * Math.pow(2, reconnectCountRef.current - 1);
         console.log(`WebSocket: Reconnecting in ${delay}ms (attempt ${reconnectCountRef.current})`);
@@ -106,25 +151,12 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
       setStatus('error');
-      onError?.(error);
+      isConnectingRef.current = false;
+      onErrorRef.current?.(error);
     };
 
     wsRef.current = ws;
-  }, [accessToken, isAuthenticated, onConnect, onDisconnect, onError, onMessage, reconnectAttempts, reconnectInterval]);
-
-  // Disconnect from WebSocket
-  const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    
-    if (wsRef.current) {
-      wsRef.current.close(1000, 'User disconnected');
-      wsRef.current = null;
-    }
-    
-    setStatus('disconnected');
-  }, []);
+  }, [accessToken, isAuthenticated, reconnectAttempts, reconnectInterval]);
 
   // Send message
   const send = useCallback((type: string, payload?: unknown) => {
@@ -150,16 +182,25 @@ export const useWebSocket = (options: UseWebSocketOptions = {}): UseWebSocketRet
     send('ack', { messageId });
   }, [send]);
 
-  // Auto-connect on mount
+  // Auto-connect on mount or when auth changes
   useEffect(() => {
-    if (autoConnect && isAuthenticated) {
-      connect();
+    if (autoConnect && isAuthenticated && accessToken) {
+      // Small delay to avoid race conditions with auth state
+      const timer = setTimeout(() => {
+        connect();
+      }, 100);
+      return () => clearTimeout(timer);
+    } else if (!isAuthenticated) {
+      disconnect();
     }
+  }, [autoConnect, isAuthenticated, accessToken]); // Removed connect/disconnect from deps
 
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
       disconnect();
     };
-  }, [autoConnect, isAuthenticated, connect, disconnect]);
+  }, []); // Only run on unmount
 
   return {
     status,
