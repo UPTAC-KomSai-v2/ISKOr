@@ -1,16 +1,10 @@
-import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios from 'axios';
 import { useAuthStore } from '@/store/authStore';
-import type { ApiResponse, AuthTokens, LoginCredentials, User } from '@/types';
 
-// ============================================
-// Axios Instance
-// ============================================
+const API_URL = '/api/v1';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
-
-const api: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
+export const api = axios.create({
+  baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -18,7 +12,7 @@ const api: AxiosInstance = axios.create({
 
 // Request interceptor - add auth token
 api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
+  (config) => {
     const token = useAuthStore.getState().accessToken;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -31,29 +25,27 @@ api.interceptors.request.use(
 // Response interceptor - handle token refresh
 api.interceptors.response.use(
   (response) => response,
-  async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+  async (error) => {
+    const originalRequest = error.config;
 
-    // If 401 and not already retried, try to refresh token
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
-      try {
-        const refreshToken = useAuthStore.getState().refreshToken;
-        if (refreshToken) {
-          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-            refreshToken,
-          });
-
+      const refreshToken = useAuthStore.getState().refreshToken;
+      if (refreshToken) {
+        try {
+          const response = await axios.post(`${API_URL}/auth/refresh`, { refreshToken });
           const { accessToken } = response.data.data;
           useAuthStore.getState().setAccessToken(accessToken);
-
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
           return api(originalRequest);
+        } catch {
+          useAuthStore.getState().logout();
+          window.location.href = '/login';
         }
-      } catch (refreshError) {
-        // Refresh failed, logout user
+      } else {
         useAuthStore.getState().logout();
+        window.location.href = '/login';
       }
     }
 
@@ -61,280 +53,98 @@ api.interceptors.response.use(
   }
 );
 
-// ============================================
 // Auth API
-// ============================================
-
 export const authApi = {
-  login: async (credentials: LoginCredentials): Promise<ApiResponse<{ user: User; tokens: AuthTokens }>> => {
-    const response = await api.post('/auth/login', credentials);
-    return response.data;
-  },
-
-  logout: async (refreshToken?: string): Promise<ApiResponse<{ message: string }>> => {
-    const response = await api.post('/auth/logout', { refreshToken });
-    return response.data;
-  },
-
-  refresh: async (refreshToken: string): Promise<ApiResponse<{ accessToken: string; expiresIn: number }>> => {
-    const response = await api.post('/auth/refresh', { refreshToken });
-    return response.data;
-  },
-
-  me: async (): Promise<ApiResponse<{ user: User }>> => {
-    const response = await api.get('/auth/me');
-    return response.data;
-  },
+  login: (email: string, password: string) =>
+    api.post('/auth/login', { email, password }),
+  logout: (refreshToken: string) =>
+    api.post('/auth/logout', { refreshToken }),
+  me: () => api.get('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.put('/auth/password', { currentPassword, newPassword }),
 };
 
-// ============================================
+// Dashboard API
+export const dashboardApi = {
+  getStats: () => api.get('/dashboard/stats'),
+  getRecentActivity: (limit = 10) => api.get(`/dashboard/recent-activity?limit=${limit}`),
+};
+
+// Courses API
+export const coursesApi = {
+  list: (params?: Record<string, any>) => api.get('/courses', { params }),
+  get: (id: string) => api.get(`/courses/${id}`),
+  create: (data: any) => api.post('/courses', data),
+  update: (id: string, data: any) => api.put(`/courses/${id}`, data),
+  delete: (id: string) => api.delete(`/courses/${id}`),
+  getStudents: (id: string) => api.get(`/courses/${id}/students`),
+  enrollStudents: (id: string, studentIds: string[]) =>
+    api.post(`/courses/${id}/enroll`, { studentIds }),
+};
+
 // Exams API
-// ============================================
-
 export const examsApi = {
-  list: async (params?: { page?: number; limit?: number; status?: string }) => {
-    const response = await api.get('/exams', { params });
-    return response.data;
-  },
-
-  get: async (id: string) => {
-    const response = await api.get(`/exams/${id}`);
-    return response.data;
-  },
-
-  create: async (data: {
-    title: string;
-    description?: string;
-    courseId: string;
-    type: string;
-    totalPoints: number;
-    passingScore: number;
-    guidelines?: string;
-  }) => {
-    const response = await api.post('/exams', data);
-    return response.data;
-  },
-
-  update: async (id: string, data: Partial<{
-    title: string;
-    description: string;
-    type: string;
-    totalPoints: number;
-    passingScore: number;
-    guidelines: string;
-    status: string;
-  }>) => {
-    const response = await api.put(`/exams/${id}`, data);
-    return response.data;
-  },
-
-  delete: async (id: string) => {
-    const response = await api.delete(`/exams/${id}`);
-    return response.data;
-  },
+  list: (params?: Record<string, any>) => api.get('/exams', { params }),
+  getUpcoming: (limit = 5) => api.get(`/exams/upcoming?limit=${limit}`),
+  get: (id: string) => api.get(`/exams/${id}`),
+  create: (data: any) => api.post('/exams', data),
+  update: (id: string, data: any) => api.put(`/exams/${id}`, data),
+  delete: (id: string) => api.delete(`/exams/${id}`),
+  addSchedule: (id: string, data: any) => api.post(`/exams/${id}/schedules`, data),
+  updateSchedule: (examId: string, scheduleId: string, data: any) =>
+    api.put(`/exams/${examId}/schedules/${scheduleId}`, data),
+  deleteSchedule: (examId: string, scheduleId: string) =>
+    api.delete(`/exams/${examId}/schedules/${scheduleId}`),
 };
 
-// ============================================
-// Schedules API
-// ============================================
-
-export const schedulesApi = {
-  list: async (params?: { examId?: string; upcoming?: boolean }) => {
-    const response = await api.get('/schedules', { params });
-    return response.data;
-  },
-
-  getByExam: async (examId: string) => {
-    const response = await api.get(`/schedules/exam/${examId}`);
-    return response.data;
-  },
-
-  create: async (data: {
-    examId: string;
-    section?: string;
-    room?: string;
-    meetLink?: string;
-    startTime: string;
-    endTime: string;
-  }) => {
-    const response = await api.post('/schedules', data);
-    return response.data;
-  },
-
-  update: async (id: string, data: Partial<{
-    section: string;
-    room: string;
-    meetLink: string;
-    startTime: string;
-    endTime: string;
-  }>) => {
-    const response = await api.put(`/schedules/${id}`, data);
-    return response.data;
-  },
-
-  delete: async (id: string) => {
-    const response = await api.delete(`/schedules/${id}`);
-    return response.data;
-  },
-};
-
-// ============================================
-// Announcements API
-// ============================================
-
-export const announcementsApi = {
-  list: async (params?: { page?: number; limit?: number; examId?: string; type?: string }) => {
-    const response = await api.get('/announcements', { params });
-    return response.data;
-  },
-
-  get: async (id: string) => {
-    const response = await api.get(`/announcements/${id}`);
-    return response.data;
-  },
-
-  create: async (data: {
-    title: string;
-    content: string;
-    type: string;
-    priority?: string;
-    examId?: string;
-    targetRoles: string;
-    expiresAt?: string;
-  }) => {
-    const response = await api.post('/announcements', data);
-    return response.data;
-  },
-
-  update: async (id: string, data: Partial<{
-    title: string;
-    content: string;
-    type: string;
-    priority: string;
-    targetRoles: string;
-    expiresAt: string;
-  }>) => {
-    const response = await api.put(`/announcements/${id}`, data);
-    return response.data;
-  },
-
-  delete: async (id: string) => {
-    const response = await api.delete(`/announcements/${id}`);
-    return response.data;
-  },
-};
-
-// ============================================
 // Results API
-// ============================================
-
 export const resultsApi = {
-  list: async (params?: { page?: number; limit?: number; examId?: string; status?: string }) => {
-    const response = await api.get('/results', { params });
-    return response.data;
-  },
-
-  get: async (id: string) => {
-    const response = await api.get(`/results/${id}`);
-    return response.data;
-  },
-
-  create: async (data: {
-    examId: string;
-    studentId: string;
-    score: number;
-    remarks?: string;
-  }) => {
-    const response = await api.post('/results', data);
-    return response.data;
-  },
-
-  createBulk: async (data: {
-    examId: string;
-    results: Array<{ studentId: string; score: number; remarks?: string }>;
-  }) => {
-    const response = await api.post('/results/bulk', data);
-    return response.data;
-  },
-
-  publish: async (id: string) => {
-    const response = await api.put(`/results/${id}/publish`);
-    return response.data;
-  },
-
-  requestRegrade: async (id: string, reason: string) => {
-    const response = await api.post(`/results/${id}/regrade`, { reason });
-    return response.data;
-  },
-
-  respondToRegrade: async (id: string, data: {
-    status: 'APPROVED' | 'REJECTED' | 'RESOLVED';
-    response: string;
-    newScore?: number;
-  }) => {
-    const response = await api.put(`/results/regrade/${id}/respond`, data);
-    return response.data;
-  },
+  list: (params?: Record<string, any>) => api.get('/results', { params }),
+  getByExam: (examId: string) => api.get(`/results/exam/${examId}`),
+  get: (id: string) => api.get(`/results/${id}`),
+  create: (data: any) => api.post('/results', data),
+  createBulk: (examId: string, results: any[]) =>
+    api.post('/results/bulk', { examId, results }),
+  update: (id: string, data: any) => api.put(`/results/${id}`, data),
+  publish: (id: string) => api.put(`/results/${id}/publish`),
+  publishBulk: (resultIds: string[]) => api.put('/results/publish-bulk', { resultIds }),
+  requestRegrade: (id: string, reason: string) =>
+    api.post(`/results/${id}/regrade`, { reason }),
+  respondToRegrade: (resultId: string, regradeId: string, data: any) =>
+    api.put(`/results/${resultId}/regrade/${regradeId}`, data),
+  getPendingRegrades: () => api.get('/results/regrades/pending'),
 };
 
-// ============================================
-// Students API
-// ============================================
-
-export const studentsApi = {
-  list: async (params?: { page?: number; limit?: number; search?: string; program?: string }) => {
-    const response = await api.get('/students', { params });
-    return response.data;
-  },
-
-  get: async (id: string) => {
-    const response = await api.get(`/students/${id}`);
-    return response.data;
-  },
-
-  getByCourse: async (courseId: string) => {
-    const response = await api.get(`/students/by-course/${courseId}`);
-    return response.data;
-  },
-
-  sync: async (students: Array<{
-    email: string;
-    firstName: string;
-    lastName: string;
-    studentNumber: string;
-    program: string;
-    yearLevel: number;
-    section?: string;
-  }>) => {
-    const response = await api.post('/students/sync', { students });
-    return response.data;
-  },
+// Announcements API
+export const announcementsApi = {
+  list: (params?: Record<string, any>) => api.get('/announcements', { params }),
+  getRecent: (limit = 5) => api.get(`/announcements/recent?limit=${limit}`),
+  get: (id: string) => api.get(`/announcements/${id}`),
+  create: (data: any) => api.post('/announcements', data),
+  update: (id: string, data: any) => api.put(`/announcements/${id}`, data),
+  delete: (id: string) => api.delete(`/announcements/${id}`),
 };
 
-// ============================================
 // Notifications API
-// ============================================
-
 export const notificationsApi = {
-  list: async (params?: { page?: number; limit?: number; unreadOnly?: boolean }) => {
-    const response = await api.get('/notifications', { params });
-    return response.data;
-  },
+  list: (params?: Record<string, any>) => api.get('/notifications', { params }),
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+  markAsRead: (id: string) => api.put(`/notifications/${id}/read`),
+  markAllAsRead: () => api.put('/notifications/read-all'),
+  delete: (id: string) => api.delete(`/notifications/${id}`),
+  clearAll: () => api.delete('/notifications'),
+};
 
-  getUnreadCount: async () => {
-    const response = await api.get('/notifications/unread-count');
-    return response.data;
-  },
-
-  markAsRead: async (id: string) => {
-    const response = await api.put(`/notifications/${id}/read`);
-    return response.data;
-  },
-
-  markAllAsRead: async () => {
-    const response = await api.put('/notifications/read-all');
-    return response.data;
-  },
+// Users API
+export const usersApi = {
+  list: (params?: Record<string, any>) => api.get('/users', { params }),
+  getStudents: (params?: Record<string, any>) => api.get('/users/students', { params }),
+  getFaculty: () => api.get('/users/faculty'),
+  get: (id: string) => api.get(`/users/${id}`),
+  create: (data: any) => api.post('/users', data),
+  update: (id: string, data: any) => api.put(`/users/${id}`, data),
+  delete: (id: string) => api.delete(`/users/${id}`),
+  createBulk: (users: any[]) => api.post('/users/bulk', { users }),
 };
 
 export default api;

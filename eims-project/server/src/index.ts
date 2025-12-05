@@ -2,121 +2,54 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
+import mongoose from 'mongoose';
 
-import config from './config/index';
-import logger from './utils/logger';
+import config from './config';
+import routes from './routes';
+import { wsService } from './services/websocket';
 import { auditMiddleware } from './middleware/audit';
-import wsService from './services/websocket';
-
-// Route imports
-import authRoutes from './routes/auth';
-import examRoutes from './routes/exams';
-import scheduleRoutes from './routes/schedules';
-import announcementRoutes from './routes/announcements';
-import resultRoutes from './routes/results';
-import studentRoutes from './routes/students';
-import notificationRoutes from './routes/notifications';
-
-// ============================================
-// Express App Setup
-// ============================================
+import logger from './utils/logger';
 
 const app = express();
-const httpServer = createServer(app);
+const server = createServer(app);
 
-// ============================================
+// Connect to MongoDB
+mongoose
+  .connect(config.mongodb.uri)
+  .then(() => {
+    logger.info('Connected to MongoDB');
+  })
+  .catch((error) => {
+    logger.error('MongoDB connection error:', error);
+    process.exit(1);
+  });
+
 // Middleware
-// ============================================
-
-// Security headers
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:'],
-    },
-  },
+  contentSecurityPolicy: false, // Disable for development
 }));
-
-// CORS
-app.use(cors({
-  origin: config.cors.origin,
-  credentials: config.cors.credentials,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.max,
-  message: {
-    success: false,
-    error: {
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Too many requests, please try again later',
-    },
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
-
-// Body parsing
+app.use(cors(config.cors));
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Request logging
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined', {
-  stream: {
-    write: (message) => logger.http(message.trim()),
-  },
+  stream: { write: (message) => logger.info(message.trim()) },
 }));
 
 // Audit logging
 app.use(auditMiddleware);
 
-// ============================================
-// API Routes
-// ============================================
-
 // Health check
 app.get('/health', (req, res) => {
   res.json({
-    success: true,
-    data: {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      version: '1.0.0',
-    },
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
   });
 });
 
-// WebSocket stats endpoint
-app.get('/api/v1/ws/stats', (req, res) => {
-  res.json({
-    success: true,
-    data: wsService.getStats(),
-  });
-});
-
-// API v1 routes
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/exams', examRoutes);
-app.use('/api/v1/schedules', scheduleRoutes);
-app.use('/api/v1/announcements', announcementRoutes);
-app.use('/api/v1/results', resultRoutes);
-app.use('/api/v1/students', studentRoutes);
-app.use('/api/v1/notifications', notificationRoutes);
-
-// ============================================
-// Error Handling
-// ============================================
+// API routes
+app.use('/api/v1', routes);
 
 // 404 handler
 app.use((req, res) => {
@@ -124,78 +57,52 @@ app.use((req, res) => {
     success: false,
     error: {
       code: 'NOT_FOUND',
-      message: `Cannot ${req.method} ${req.path}`,
+      message: `Route ${req.method} ${req.path} not found`,
     },
   });
 });
 
-// Global error handler
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+// Error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   logger.error('Unhandled error:', err);
-
   res.status(500).json({
     success: false,
     error: {
       code: 'INTERNAL_ERROR',
       message: config.isDev ? err.message : 'An unexpected error occurred',
-      ...(config.isDev && { stack: err.stack }),
     },
   });
 });
 
-// ============================================
-// Server Startup
-// ============================================
+// Initialize WebSocket
+wsService.initialize(server);
 
-const startServer = async () => {
-  try {
-    // Initialize WebSocket server
-    wsService.initialize(httpServer);
+// Start server
+server.listen(config.port, () => {
+  logger.info(`
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║   ExamFlow EIMS Server                                        ║
+║   ─────────────────                                           ║
+║                                                               ║
+║   🚀 Server running on http://localhost:${config.port}               ║
+║   📡 WebSocket available at ws://localhost:${config.port}/ws         ║
+║   🔗 MongoDB: ${config.mongodb.uri.substring(0, 40)}...              
+║   🌍 Environment: ${config.nodeEnv}                                  ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+  `);
+});
 
-    // Start HTTP server
-    httpServer.listen(config.port, () => {
-      logger.info(`
-╔════════════════════════════════════════════════════════════╗
-║                                                            ║
-║   🎓 ExamFlow EIMS Server                                  ║
-║                                                            ║
-║   REST API:    http://localhost:${config.port}/api/v1            ║
-║   WebSocket:   ws://localhost:${config.port}/ws                  ║
-║   Health:      http://localhost:${config.port}/health            ║
-║                                                            ║
-║   Environment: ${config.nodeEnv.padEnd(41)}║
-║                                                            ║
-╚════════════════════════════════════════════════════════════╝
-      `);
-    });
-
-    // Graceful shutdown
-    const shutdown = async (signal: string) => {
-      logger.info(`\n${signal} received. Shutting down gracefully...`);
-      
-      wsService.shutdown();
-      
-      httpServer.close(() => {
-        logger.info('HTTP server closed');
-        process.exit(0);
-      });
-
-      // Force shutdown after 10 seconds
-      setTimeout(() => {
-        logger.error('Forced shutdown after timeout');
-        process.exit(1);
-      }, 10000);
-    };
-
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-
-  } catch (error) {
-    logger.error('Failed to start server:', error);
-    process.exit(1);
-  }
-};
-
-startServer();
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down...');
+  wsService.shutdown();
+  await mongoose.connection.close();
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});
 
 export default app;

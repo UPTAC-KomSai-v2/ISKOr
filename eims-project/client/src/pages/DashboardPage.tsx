@@ -1,313 +1,185 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  BookOpen, Calendar, Bell, FileText, Users, Clock, 
-  TrendingUp, AlertCircle, CheckCircle, ChevronRight 
-} from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { examsApi, announcementsApi, schedulesApi } from '@/services/api';
-import { format, isAfter, isBefore, addDays } from 'date-fns';
-import type { Exam, Announcement, ExamSchedule } from '@/types';
+import { dashboardApi, examsApi, announcementsApi } from '@/services/api';
+import { Role, Exam, Announcement } from '@/types';
+import {
+  BookOpen, FileText, Users, ClipboardList, Calendar,
+  TrendingUp, Megaphone, ArrowRight,
+} from 'lucide-react';
 
 const DashboardPage = () => {
   const { user } = useAuthStore();
-  const [exams, setExams] = useState<Exam[]>([]);
+  const [stats, setStats] = useState<any>({});
+  const [upcomingExams, setUpcomingExams] = useState<Exam[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [upcomingSchedules, setUpcomingSchedules] = useState<ExamSchedule[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [examsRes, announcementsRes, schedulesRes] = await Promise.all([
-          examsApi.list({ limit: 5 }),
-          announcementsApi.list({ limit: 5 }),
-          schedulesApi.list({ upcoming: true }),
+        const [statsRes, examsRes, announcementsRes] = await Promise.all([
+          dashboardApi.getStats(),
+          examsApi.getUpcoming(5),
+          announcementsApi.getRecent(5),
         ]);
-
-        if (examsRes.success) setExams(examsRes.data);
-        if (announcementsRes.success) setAnnouncements(announcementsRes.data);
-        if (schedulesRes.success) setUpcomingSchedules(schedulesRes.data.slice(0, 5));
+        setStats(statsRes.data.data.stats);
+        setUpcomingExams(examsRes.data.data.exams);
+        setAnnouncements(announcementsRes.data.data.announcements);
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
       } finally {
-        setIsLoading(false);
+        setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'DRAFT': return 'badge-info';
-      case 'SCHEDULED': return 'badge-warning';
-      case 'ONGOING': return 'badge-success';
-      case 'COMPLETED': return 'badge-primary';
-      case 'CANCELLED': return 'badge-danger';
-      default: return 'badge-info';
+  const getStatCards = () => {
+    if (user?.role === Role.ADMIN) {
+      return [
+        { label: 'Total Users', value: stats.totalUsers || 0, icon: Users, color: 'bg-blue-500' },
+        { label: 'Total Courses', value: stats.totalCourses || 0, icon: BookOpen, color: 'bg-green-500' },
+        { label: 'Total Exams', value: stats.totalExams || 0, icon: FileText, color: 'bg-purple-500' },
+        { label: 'Active Exams', value: stats.activeExams || 0, icon: Calendar, color: 'bg-orange-500' },
+      ];
     }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'URGENT': return 'text-red-600 bg-red-50';
-      case 'HIGH': return 'text-orange-600 bg-orange-50';
-      case 'NORMAL': return 'text-blue-600 bg-blue-50';
-      case 'LOW': return 'text-gray-600 bg-gray-50';
-      default: return 'text-gray-600 bg-gray-50';
+    if (user?.role === Role.FACULTY) {
+      return [
+        { label: 'My Courses', value: stats.myCourses || 0, icon: BookOpen, color: 'bg-blue-500' },
+        { label: 'My Exams', value: stats.myExams || 0, icon: FileText, color: 'bg-purple-500' },
+        { label: 'Pending Results', value: stats.pendingResults || 0, icon: ClipboardList, color: 'bg-orange-500' },
+        { label: 'Total Students', value: stats.totalStudents || 0, icon: Users, color: 'bg-green-500' },
+      ];
     }
+    return [
+      { label: 'Enrolled Courses', value: stats.enrolledCourses || 0, icon: BookOpen, color: 'bg-blue-500' },
+      { label: 'Upcoming Exams', value: stats.upcomingExams || 0, icon: Calendar, color: 'bg-purple-500' },
+      { label: 'My Results', value: stats.myResults || 0, icon: ClipboardList, color: 'bg-green-500' },
+      { label: 'Average Score', value: stats.averageScore || 0, icon: TrendingUp, color: 'bg-orange-500' },
+    ];
   };
 
-  // Stats based on role
-  const stats = [
-    {
-      label: user?.role === 'STUDENT' ? 'Enrolled Exams' : 'Total Exams',
-      value: exams.length,
-      icon: BookOpen,
-      color: 'bg-blue-500',
-    },
-    {
-      label: 'Upcoming',
-      value: upcomingSchedules.length,
-      icon: Calendar,
-      color: 'bg-amber-500',
-    },
-    {
-      label: 'Announcements',
-      value: announcements.length,
-      icon: Bell,
-      color: 'bg-purple-500',
-    },
-    {
-      label: user?.role === 'STUDENT' ? 'Results' : 'Students',
-      value: user?.role === 'STUDENT' ? 0 : 15,
-      icon: user?.role === 'STUDENT' ? FileText : Users,
-      color: 'bg-green-500',
-    },
-  ];
+  const formatDate = (date: string) => {
+    return new Date(date).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
-  if (isLoading) {
+  if (loading) {
     return (
-      <div className="p-6 space-y-6">
-        <div className="skeleton h-24 w-full max-w-lg" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="skeleton h-24" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="skeleton h-80" />
-          <div className="skeleton h-80" />
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 animate-fade-in">
-      {/* Welcome Header */}
-      <div className="bg-gradient-to-r from-primary-700 to-primary-800 rounded-2xl p-6 text-white">
-        <h1 className="text-2xl font-display font-bold mb-1">
-          {getGreeting()}, {user?.firstName}! 👋
+    <div className="space-y-6">
+      {/* Welcome */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Welcome back, {user?.firstName}!
         </h1>
-        <p className="text-primary-100">
-          {user?.role === 'STUDENT' 
-            ? "Here's an overview of your exams and announcements"
-            : "Manage your exams and keep students informed"}
-        </p>
+        <p className="text-gray-600">Here's what's happening today.</p>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, index) => (
-          <div key={index} className="card p-5 flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-xl ${stat.color} flex items-center justify-center`}>
-              <stat.icon className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
-              <div className="text-sm text-gray-500">{stat.label}</div>
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {getStatCards().map((stat) => (
+          <div key={stat.label} className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">{stat.label}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+              </div>
+              <div className={`w-12 h-12 ${stat.color} rounded-xl flex items-center justify-center`}>
+                <stat.icon className="w-6 h-6 text-white" />
+              </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Exams */}
+        {/* Upcoming Exams */}
         <div className="card">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-primary-600" />
-              Recent Exams
-            </h2>
-            <Link to="/exams" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-              View all
+          <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Upcoming Exams</h2>
+            <Link to="/exams" className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
           <div className="divide-y divide-gray-100">
-            {exams.length === 0 ? (
+            {upcomingExams.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
-                <BookOpen className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p>No exams found</p>
+                No upcoming exams
               </div>
             ) : (
-              exams.map((exam) => (
-                <Link
-                  key={exam.id}
-                  to={`/exams/${exam.id}`}
-                  className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-gray-900 truncate">
-                        {exam.title}
-                      </span>
-                      <span className={getStatusColor(exam.status)}>
-                        {exam.status}
-                      </span>
+              upcomingExams.map((exam) => (
+                <div key={exam._id} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{exam.title}</p>
+                      <p className="text-sm text-gray-500">{exam.courseId?.code}</p>
                     </div>
-                    <div className="text-sm text-gray-500">
-                      {exam.course?.code} • {exam.type}
-                    </div>
+                    <span className={`badge ${exam.status === 'SCHEDULED' ? 'badge-primary' : 'badge-warning'}`}>
+                      {exam.status}
+                    </span>
                   </div>
-                  <ChevronRight className="w-5 h-5 text-gray-400" />
-                </Link>
+                  {exam.schedules?.[0] && (
+                    <p className="text-sm text-gray-500 mt-2 flex items-center gap-1">
+                      <Calendar className="w-4 h-4" />
+                      {formatDate(exam.schedules[0].startTime)}
+                    </p>
+                  )}
+                </div>
               ))
             )}
           </div>
         </div>
 
-        {/* Announcements */}
+        {/* Recent Announcements */}
         <div className="card">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Bell className="w-5 h-5 text-primary-600" />
-              Recent Announcements
-            </h2>
-            <Link to="/announcements" className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-              View all
+          <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="font-semibold text-gray-900">Recent Announcements</h2>
+            <Link to="/announcements" className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1">
+              View all <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
           <div className="divide-y divide-gray-100">
             {announcements.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
-                <Bell className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p>No announcements</p>
+                No announcements
               </div>
             ) : (
               announcements.map((announcement) => (
-                <Link
-                  key={announcement.id}
-                  to={`/announcements/${announcement.id}`}
-                  className="p-4 block hover:bg-gray-50 transition-colors"
-                >
+                <div key={announcement._id} className="p-4 hover:bg-gray-50">
                   <div className="flex items-start gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${getPriorityColor(announcement.priority)}`}>
-                      {announcement.priority === 'URGENT' ? (
-                        <AlertCircle className="w-4 h-4" />
-                      ) : (
-                        <Bell className="w-4 h-4" />
-                      )}
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      announcement.priority === 'URGENT' ? 'bg-red-100' :
+                      announcement.priority === 'HIGH' ? 'bg-orange-100' : 'bg-blue-100'
+                    }`}>
+                      <Megaphone className={`w-4 h-4 ${
+                        announcement.priority === 'URGENT' ? 'text-red-600' :
+                        announcement.priority === 'HIGH' ? 'text-orange-600' : 'text-blue-600'
+                      }`} />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900 truncate mb-1">
-                        {announcement.title}
-                      </div>
-                      <div className="text-sm text-gray-500 line-clamp-2">
-                        {announcement.content}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-2">
-                        {format(new Date(announcement.publishedAt), 'MMM d, yyyy h:mm a')}
-                      </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-gray-900 truncate">{announcement.title}</p>
+                      <p className="text-sm text-gray-500 line-clamp-2">{announcement.content}</p>
+                      <p className="text-xs text-gray-400 mt-1">{formatDate(announcement.publishedAt)}</p>
                     </div>
                   </div>
-                </Link>
+                </div>
               ))
             )}
           </div>
         </div>
       </div>
-
-      {/* Upcoming Schedules */}
-      {upcomingSchedules.length > 0 && (
-        <div className="card">
-          <div className="p-4 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary-600" />
-              Upcoming Exam Schedules
-            </h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Exam
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Section
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date & Time
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Location
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {upcomingSchedules.map((schedule) => {
-                  const startDate = new Date(schedule.startTime);
-                  const isToday = isBefore(startDate, addDays(new Date(), 1)) && isAfter(startDate, new Date());
-                  
-                  return (
-                    <tr key={schedule.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-4">
-                        <div className="font-medium text-gray-900">
-                          {(schedule as { exam?: { title: string } }).exam?.title || 'Unknown Exam'}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {(schedule as { exam?: { course?: { code: string } } }).exam?.course?.code}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 text-gray-600">
-                        {schedule.section || 'All sections'}
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          {isToday && (
-                            <span className="badge-warning">Today</span>
-                          )}
-                          <div>
-                            <div className="text-gray-900">
-                              {format(startDate, 'MMM d, yyyy')}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {format(startDate, 'h:mm a')} - {format(new Date(schedule.endTime), 'h:mm a')}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 text-gray-600">
-                        {schedule.room || (schedule.meetLink ? 'Online' : 'TBA')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

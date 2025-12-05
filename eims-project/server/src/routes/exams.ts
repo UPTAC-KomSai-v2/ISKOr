@@ -1,363 +1,316 @@
 import { Router, Request, Response } from 'express';
-import { PrismaClient, Role, ExamStatus } from '@prisma/client';
+import { Exam, ExamStatus, Course, Enrollment, Role, EnrollmentStatus, NotificationType } from '../models';
 import { authenticate, authorize } from '../middleware/auth';
-import {
-  createExamValidator,
-  updateExamValidator,
-  paginationValidator,
-  idParamValidator,
-} from '../middleware/validation';
-import { logEntityChange } from '../middleware/audit';
+import { createExamValidator, updateExamValidator, createScheduleValidator, mongoIdValidator, paginationValidator } from '../middleware/validation';
 import notificationService from '../services/notification';
+import wsService from '../services/websocket';
 import logger from '../utils/logger';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 /**
- * @route   GET /api/v1/exams
- * @desc    Get all exams (filtered by role)
- * @access  Private
+ * GET /api/v1/exams
  */
-router.get(
-  '/',
-  authenticate,
-  paginationValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
-      const skip = (Number(page) - 1) * Number(limit);
+router.get('/', authenticate, paginationValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
 
-      // Build filter based on role
-      let whereClause: any = {};
+    let filter: any = {};
 
-      if (req.user!.role === Role.STUDENT) {
-        // Students only see exams for their enrolled courses
-        const student = await prisma.student.findFirst({
-          where: { userId: req.user!.id },
-          include: {
-            enrollments: {
-              where: { status: 'ENROLLED' },
-              select: { courseId: true },
-            },
-          },
-        });
-
-        if (student) {
-          const courseIds = student.enrollments.map((e) => e.courseId);
-          whereClause = {
-            courseId: { in: courseIds },
-            status: { not: ExamStatus.DRAFT }, // Students don't see drafts
-          };
-        }
-      } else if (req.user!.role === Role.FACULTY) {
-        // Faculty see their own exams
-        whereClause = { createdById: req.user!.id };
-      }
-      // Admin sees all exams
-
-      const [exams, total] = await Promise.all([
-        prisma.exam.findMany({
-          where: whereClause,
-          include: {
-            course: { select: { code: true, name: true } },
-            createdBy: { select: { firstName: true, lastName: true } },
-            schedules: true,
-            _count: { select: { results: true } },
-          },
-          orderBy: { [sortBy as string]: sortOrder },
-          skip,
-          take: Number(limit),
-        }),
-        prisma.exam.count({ where: whereClause }),
-      ]);
-
-      res.json({
-        success: true,
-        data: exams,
-        pagination: {
-          page: Number(page),
-          limit: Number(limit),
-          total,
-          totalPages: Math.ceil(total / Number(limit)),
-        },
-      });
-    } catch (error) {
-      logger.error('Get exams error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch exams' },
-      });
+    if (req.user!.role === Role.STUDENT) {
+      const enrollments = await Enrollment.find({
+        studentId: req.user!.id,
+        status: EnrollmentStatus.ENROLLED,
+      }).select('courseId');
+      filter.courseId = { $in: enrollments.map(e => e.courseId) };
+      filter.status = { $ne: ExamStatus.DRAFT };
     }
+
+    if (req.user!.role === Role.FACULTY) {
+      filter.createdById = req.user!.id;
+    }
+
+    if (req.query.courseId) filter.courseId = req.query.courseId;
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.type) filter.type = req.query.type;
+    if (req.query.upcoming === 'true') {
+      filter['schedules.startTime'] = { $gte: new Date() };
+    }
+
+    const [exams, total] = await Promise.all([
+      Exam.find(filter)
+        .populate('courseId', 'code name')
+        .populate('createdById', 'firstName lastName')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Exam.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      data: { exams, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+    });
+  } catch (error) {
+    logger.error('List exams error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch exams' } });
   }
-);
+});
 
 /**
- * @route   GET /api/v1/exams/:id
- * @desc    Get exam by ID
- * @access  Private
+ * GET /api/v1/exams/upcoming
  */
-router.get(
-  '/:id',
-  authenticate,
-  idParamValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const exam = await prisma.exam.findUnique({
-        where: { id: req.params.id },
-        include: {
-          course: {
-            select: { code: true, name: true, semester: true },
-          },
-          createdBy: {
-            select: { firstName: true, lastName: true, email: true },
-          },
-          schedules: {
-            orderBy: { startTime: 'asc' },
-          },
-          files: {
-            select: { id: true, originalName: true, mimeType: true, size: true, uploadedAt: true },
-          },
-          announcements: {
-            orderBy: { publishedAt: 'desc' },
-            take: 5,
-          },
-        },
-      });
+router.get('/upcoming', authenticate, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 5;
+    let filter: any = {
+      'schedules.startTime': { $gte: new Date() },
+      status: { $in: [ExamStatus.SCHEDULED, ExamStatus.ONGOING] },
+    };
 
-      if (!exam) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Exam not found' },
-        });
-        return;
-      }
-
-      // Check access for students
-      if (req.user!.role === Role.STUDENT && exam.status === ExamStatus.DRAFT) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'Cannot view draft exams' },
-        });
-        return;
-      }
-
-      res.json({
-        success: true,
-        data: exam,
-      });
-    } catch (error) {
-      logger.error('Get exam error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch exam' },
-      });
+    if (req.user!.role === Role.STUDENT) {
+      const enrollments = await Enrollment.find({
+        studentId: req.user!.id,
+        status: EnrollmentStatus.ENROLLED,
+      }).select('courseId');
+      filter.courseId = { $in: enrollments.map(e => e.courseId) };
+    } else if (req.user!.role === Role.FACULTY) {
+      filter.createdById = req.user!.id;
     }
+
+    const exams = await Exam.find(filter)
+      .populate('courseId', 'code name')
+      .sort({ 'schedules.startTime': 1 })
+      .limit(limit);
+
+    res.json({ success: true, data: { exams } });
+  } catch (error) {
+    logger.error('Get upcoming exams error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch upcoming exams' } });
   }
-);
+});
 
 /**
- * @route   POST /api/v1/exams
- * @desc    Create new exam
- * @access  Private (Faculty, Admin)
+ * GET /api/v1/exams/:id
  */
-router.post(
-  '/',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  createExamValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { title, description, courseId, type, totalPoints, passingScore, guidelines } = req.body;
+router.get('/:id', authenticate, mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id)
+      .populate('courseId', 'code name facultyId')
+      .populate('createdById', 'firstName lastName email');
 
-      // Verify course exists
-      const course = await prisma.course.findUnique({ where: { id: courseId } });
-      if (!course) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_COURSE', message: 'Course not found' },
-        });
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    if (req.user!.role === Role.STUDENT) {
+      const enrollment = await Enrollment.findOne({
+        studentId: req.user!.id,
+        courseId: exam.courseId,
+        status: EnrollmentStatus.ENROLLED,
+      });
+      if (!enrollment || exam.status === ExamStatus.DRAFT) {
+        res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } });
         return;
       }
-
-      const exam = await prisma.exam.create({
-        data: {
-          title,
-          description,
-          courseId,
-          createdById: req.user!.id,
-          type,
-          totalPoints,
-          passingScore,
-          guidelines,
-          status: ExamStatus.DRAFT,
-        },
-        include: {
-          course: { select: { code: true, name: true } },
-        },
-      });
-
-      // Log the creation
-      await logEntityChange(req, 'CREATE', 'Exam', exam.id, { title, courseId });
-
-      logger.info(`Exam created: ${exam.title} by ${req.user!.email}`);
-
-      res.status(201).json({
-        success: true,
-        data: exam,
-      });
-    } catch (error) {
-      logger.error('Create exam error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to create exam' },
-      });
     }
+
+    res.json({ success: true, data: { exam } });
+  } catch (error) {
+    logger.error('Get exam error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch exam' } });
   }
-);
+});
 
 /**
- * @route   PUT /api/v1/exams/:id
- * @desc    Update exam
- * @access  Private (Faculty owner, Admin)
+ * POST /api/v1/exams
  */
-router.put(
-  '/:id',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  updateExamValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const examId = req.params.id;
+router.post('/', authenticate, authorize(Role.ADMIN, Role.FACULTY), createExamValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, description, courseId, type, totalPoints, passingScore, guidelines } = req.body;
 
-      // Check if exam exists and user has permission
-      const existingExam = await prisma.exam.findUnique({ where: { id: examId } });
-
-      if (!existingExam) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Exam not found' },
-        });
-        return;
-      }
-
-      // Only owner or admin can update
-      if (req.user!.role !== Role.ADMIN && existingExam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only update your own exams' },
-        });
-        return;
-      }
-
-      const { title, description, type, totalPoints, passingScore, guidelines, status } = req.body;
-
-      const exam = await prisma.exam.update({
-        where: { id: examId },
-        data: {
-          ...(title && { title }),
-          ...(description !== undefined && { description }),
-          ...(type && { type }),
-          ...(totalPoints && { totalPoints }),
-          ...(passingScore && { passingScore }),
-          ...(guidelines !== undefined && { guidelines }),
-          ...(status && { status }),
-        },
-        include: {
-          course: { select: { code: true, name: true } },
-          schedules: true,
-        },
-      });
-
-      // Log the update
-      await logEntityChange(req, 'UPDATE', 'Exam', exam.id, req.body);
-
-      // If status changed to SCHEDULED, notify students
-      if (status === ExamStatus.SCHEDULED && existingExam.status === ExamStatus.DRAFT) {
-        await notificationService.notifyCourseStudents(exam.courseId, {
-          type: 'exam_scheduled',
-          title: `New Exam Scheduled: ${exam.title}`,
-          message: `A new exam has been scheduled for ${exam.course.code}. Check the schedule for details.`,
-          examId: exam.id,
-        });
-      }
-
-      res.json({
-        success: true,
-        data: exam,
-      });
-    } catch (error) {
-      logger.error('Update exam error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to update exam' },
-      });
+    const course = await Course.findById(courseId);
+    if (!course) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Course not found' } });
+      return;
     }
+
+    if (req.user!.role === Role.FACULTY && course.facultyId.toString() !== req.user!.id) {
+      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Not authorized for this course' } });
+      return;
+    }
+
+    const exam = await Exam.create({
+      title, description, courseId, createdById: req.user!.id, type, totalPoints, passingScore, guidelines, status: ExamStatus.DRAFT,
+    });
+
+    await exam.populate('courseId', 'code name');
+    await exam.populate('createdById', 'firstName lastName');
+
+    logger.info(`Exam created: ${exam.title} by ${req.user!.email}`);
+    res.status(201).json({ success: true, data: { exam } });
+  } catch (error) {
+    logger.error('Create exam error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create exam' } });
   }
-);
+});
 
 /**
- * @route   DELETE /api/v1/exams/:id
- * @desc    Delete exam
- * @access  Private (Faculty owner, Admin)
+ * PUT /api/v1/exams/:id
  */
-router.delete(
-  '/:id',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  idParamValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const examId = req.params.id;
-
-      const exam = await prisma.exam.findUnique({ where: { id: examId } });
-
-      if (!exam) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Exam not found' },
-        });
-        return;
-      }
-
-      // Only owner or admin can delete
-      if (req.user!.role !== Role.ADMIN && exam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only delete your own exams' },
-        });
-        return;
-      }
-
-      // Cannot delete if exam has results
-      const resultsCount = await prisma.examResult.count({ where: { examId } });
-      if (resultsCount > 0) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'HAS_RESULTS', message: 'Cannot delete exam with existing results' },
-        });
-        return;
-      }
-
-      await prisma.exam.delete({ where: { id: examId } });
-
-      // Log deletion
-      await logEntityChange(req, 'DELETE', 'Exam', examId, { title: exam.title });
-
-      logger.info(`Exam deleted: ${exam.title} by ${req.user!.email}`);
-
-      res.json({
-        success: true,
-        data: { message: 'Exam deleted successfully' },
-      });
-    } catch (error) {
-      logger.error('Delete exam error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to delete exam' },
-      });
+router.put('/:id', authenticate, authorize(Role.ADMIN, Role.FACULTY), updateExamValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
     }
+
+    if (req.user!.role === Role.FACULTY && exam.createdById.toString() !== req.user!.id) {
+      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Not authorized' } });
+      return;
+    }
+
+    const { title, description, type, status, totalPoints, passingScore, guidelines } = req.body;
+    if (title) exam.title = title;
+    if (description !== undefined) exam.description = description;
+    if (type) exam.type = type;
+    if (status) exam.status = status;
+    if (totalPoints) exam.totalPoints = totalPoints;
+    if (passingScore !== undefined) exam.passingScore = passingScore;
+    if (guidelines !== undefined) exam.guidelines = guidelines;
+
+    await exam.save();
+    await exam.populate('courseId', 'code name');
+    await exam.populate('createdById', 'firstName lastName');
+
+    if (status === ExamStatus.SCHEDULED) {
+      const enrollments = await Enrollment.find({ courseId: exam.courseId, status: EnrollmentStatus.ENROLLED }).select('studentId');
+      const studentIds = enrollments.map(e => e.studentId.toString());
+      await notificationService.notifyMany(studentIds, NotificationType.EXAM_SCHEDULED, 'New Exam Scheduled', `${exam.title} has been scheduled`, { examId: exam._id });
+      wsService.sendToChannel('announcements', 'exam:scheduled', { examId: exam._id, title: exam.title });
+    }
+
+    res.json({ success: true, data: { exam } });
+  } catch (error) {
+    logger.error('Update exam error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update exam' } });
   }
-);
+});
+
+/**
+ * DELETE /api/v1/exams/:id
+ */
+router.delete('/:id', authenticate, authorize(Role.ADMIN, Role.FACULTY), mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    if (req.user!.role !== Role.ADMIN && exam.status !== ExamStatus.DRAFT) {
+      res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Only draft exams can be deleted' } });
+      return;
+    }
+
+    await exam.deleteOne();
+    res.json({ success: true, data: { message: 'Exam deleted successfully' } });
+  } catch (error) {
+    logger.error('Delete exam error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete exam' } });
+  }
+});
+
+/**
+ * POST /api/v1/exams/:id/schedules
+ */
+router.post('/:id/schedules', authenticate, authorize(Role.ADMIN, Role.FACULTY), createScheduleValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    const { section, room, meetingLink, startTime, endTime, instructions } = req.body;
+    exam.schedules.push({ section, room, meetingLink, startTime: new Date(startTime), endTime: new Date(endTime), instructions });
+    await exam.save();
+    await exam.populate('courseId', 'code name');
+
+    const enrollments = await Enrollment.find({ courseId: exam.courseId, status: EnrollmentStatus.ENROLLED }).select('studentId');
+    const studentIds = enrollments.map(e => e.studentId.toString());
+    await notificationService.notifyMany(studentIds, NotificationType.EXAM_UPDATED, 'Exam Schedule Added', `New schedule for ${exam.title}: ${section}`, { examId: exam._id });
+
+    res.status(201).json({ success: true, data: { exam } });
+  } catch (error) {
+    logger.error('Add schedule error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to add schedule' } });
+  }
+});
+
+/**
+ * PUT /api/v1/exams/:id/schedules/:scheduleId
+ */
+router.put('/:id/schedules/:scheduleId', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    const schedule = exam.schedules.id(req.params.scheduleId);
+    if (!schedule) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Schedule not found' } });
+      return;
+    }
+
+    const { section, room, meetingLink, startTime, endTime, instructions } = req.body;
+    if (section) schedule.section = section;
+    if (room !== undefined) schedule.room = room;
+    if (meetingLink !== undefined) schedule.meetingLink = meetingLink;
+    if (startTime) schedule.startTime = new Date(startTime);
+    if (endTime) schedule.endTime = new Date(endTime);
+    if (instructions !== undefined) schedule.instructions = instructions;
+
+    await exam.save();
+    wsService.sendToChannel('announcements', 'schedule:updated', { examId: exam._id, scheduleId: schedule._id });
+
+    res.json({ success: true, data: { exam } });
+  } catch (error) {
+    logger.error('Update schedule error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update schedule' } });
+  }
+});
+
+/**
+ * DELETE /api/v1/exams/:id/schedules/:scheduleId
+ */
+router.delete('/:id/schedules/:scheduleId', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    const schedule = exam.schedules.id(req.params.scheduleId);
+    if (!schedule) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Schedule not found' } });
+      return;
+    }
+
+    schedule.deleteOne();
+    await exam.save();
+    res.json({ success: true, data: { message: 'Schedule deleted successfully' } });
+  } catch (error) {
+    logger.error('Delete schedule error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to delete schedule' } });
+  }
+});
 
 export default router;

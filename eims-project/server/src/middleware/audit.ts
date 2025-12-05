@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { AuditLog } from '../models';
 import logger from '../utils/logger';
-
-const prisma = new PrismaClient();
 
 /**
  * Create an audit log entry
@@ -10,23 +8,21 @@ const prisma = new PrismaClient();
 export const createAuditLog = async (
   userId: string | null,
   action: string,
-  entity: string,
-  entityId: string | null,
-  changes?: Record<string, unknown>,
+  entityType: string,
+  entityId?: string,
+  changes?: Record<string, any>,
   ipAddress?: string,
   userAgent?: string
 ): Promise<void> => {
   try {
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action,
-        entity,
-        entityId,
-        changes: changes ? JSON.stringify(changes) : null,
-        ipAddress,
-        userAgent,
-      },
+    await AuditLog.create({
+      userId: userId || undefined,
+      action,
+      entityType,
+      entityId,
+      changes,
+      ipAddress,
+      userAgent,
     });
   } catch (error) {
     logger.error('Failed to create audit log:', error);
@@ -34,67 +30,46 @@ export const createAuditLog = async (
 };
 
 /**
- * Middleware to log all requests
+ * Audit middleware - logs all mutating requests
  */
-export const auditMiddleware = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
-  // Store original end function
-  const originalEnd = res.end;
+export const auditMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+  const originalSend = res.send;
 
-  // Override end function to log after response
-  res.end = function (chunk?: unknown, encoding?: unknown): Response {
-    // Log the request
-    const logData = {
-      method: req.method,
-      path: req.path,
-      statusCode: res.statusCode,
-      userId: req.user?.id || null,
-      ip: req.ip || req.socket.remoteAddress,
-      userAgent: req.get('user-agent'),
-    };
-
-    // Only log write operations in audit log
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+  res.send = function (body: any) {
+    // Only log successful mutating operations
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && res.statusCode < 400) {
+      const action = getActionFromMethod(req.method);
+      const entityType = getEntityTypeFromPath(req.path);
+      
       createAuditLog(
         req.user?.id || null,
-        req.method,
-        req.path,
-        null,
-        { body: req.body },
-        logData.ip,
-        logData.userAgent
+        action,
+        entityType,
+        req.params.id,
+        req.method === 'DELETE' ? undefined : req.body,
+        req.ip,
+        req.get('user-agent')
       );
     }
 
-    logger.debug('Request completed', logData);
-
-    // Call original end function
-    return originalEnd.call(this, chunk, encoding as BufferEncoding);
+    return originalSend.call(this, body);
   };
 
   next();
 };
 
-/**
- * Helper to log specific entity changes
- */
-export const logEntityChange = async (
-  req: Request,
-  action: 'CREATE' | 'UPDATE' | 'DELETE',
-  entity: string,
-  entityId: string,
-  changes?: Record<string, unknown>
-): Promise<void> => {
-  await createAuditLog(
-    req.user?.id || null,
-    action,
-    entity,
-    entityId,
-    changes,
-    req.ip || req.socket.remoteAddress,
-    req.get('user-agent')
-  );
+const getActionFromMethod = (method: string): string => {
+  switch (method) {
+    case 'POST': return 'CREATE';
+    case 'PUT':
+    case 'PATCH': return 'UPDATE';
+    case 'DELETE': return 'DELETE';
+    default: return 'UNKNOWN';
+  }
+};
+
+const getEntityTypeFromPath = (path: string): string => {
+  const parts = path.split('/').filter(Boolean);
+  // e.g., /api/v1/exams -> exams
+  return parts[2] || 'unknown';
 };

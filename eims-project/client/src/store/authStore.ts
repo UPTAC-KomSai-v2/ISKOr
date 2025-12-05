@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import type { User, AuthTokens } from '@/types';
 
 interface AuthState {
@@ -7,15 +7,9 @@ interface AuthState {
   accessToken: string | null;
   refreshToken: string | null;
   isAuthenticated: boolean;
-  isLoading: boolean;
-
-  // Actions
-  setUser: (user: User) => void;
-  setTokens: (tokens: AuthTokens) => void;
+  setAuth: (user: User, tokens: AuthTokens) => void;
   setAccessToken: (token: string) => void;
-  login: (user: User, tokens: AuthTokens) => void;
   logout: () => void;
-  setLoading: (loading: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -25,38 +19,24 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       refreshToken: null,
       isAuthenticated: false,
-      isLoading: true,
-
-      setUser: (user) => set({ user }),
-
-      setTokens: (tokens) => set({
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-      }),
-
+      setAuth: (user, tokens) =>
+        set({
+          user,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          isAuthenticated: true,
+        }),
       setAccessToken: (token) => set({ accessToken: token }),
-
-      login: (user, tokens) => set({
-        user,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        isAuthenticated: true,
-        isLoading: false,
-      }),
-
-      logout: () => set({
-        user: null,
-        accessToken: null,
-        refreshToken: null,
-        isAuthenticated: false,
-        isLoading: false,
-      }),
-
-      setLoading: (loading) => set({ isLoading: loading }),
+      logout: () =>
+        set({
+          user: null,
+          accessToken: null,
+          refreshToken: null,
+          isAuthenticated: false,
+        }),
     }),
     {
-      name: 'examflow-auth',
-      storage: createJSONStorage(() => localStorage),
+      name: 'auth-storage',
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

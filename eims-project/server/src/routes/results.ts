@@ -1,610 +1,426 @@
 import { Router, Request, Response } from 'express';
-import { PrismaClient, Role, ResultStatus, RegradeStatus } from '@prisma/client';
+import { ExamResult, ResultStatus, RegradeStatus, Exam, Enrollment, Role, EnrollmentStatus, NotificationType } from '../models';
 import { authenticate, authorize } from '../middleware/auth';
-import {
-  createResultValidator,
-  regradeRequestValidator,
-  paginationValidator,
-  idParamValidator,
-} from '../middleware/validation';
-import { logEntityChange } from '../middleware/audit';
+import { createResultValidator, bulkResultValidator, regradeRequestValidator, regradeResponseValidator, mongoIdValidator, paginationValidator } from '../middleware/validation';
 import notificationService from '../services/notification';
+import wsService from '../services/websocket';
 import logger from '../utils/logger';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 /**
- * @route   GET /api/v1/results
- * @desc    Get results (role-filtered)
- * @access  Private
+ * GET /api/v1/results
+ * List results with filters
  */
-router.get(
-  '/',
-  authenticate,
-  paginationValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { page = 1, limit = 10, examId, status } = req.query;
-      const skip = (Number(page) - 1) * Number(limit);
-
-      let whereClause: any = {};
-
-      // Filter by exam if provided
-      if (examId) {
-        whereClause.examId = examId;
-      }
-
-      // Filter by status if provided
-      if (status) {
-        whereClause.status = status;
-      }
-
-      // Role-based filtering
-      if (req.user!.role === Role.STUDENT) {
-        // Students only see their own published results
-        const student = await prisma.student.findFirst({
-          where: { userId: req.user!.id },
-        });
-
-        if (!student) {
-          res.json({ success: true, data: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 0 } });
-          return;
-        }
-
-        whereClause.studentId = student.id;
-        whereClause.status = ResultStatus.PUBLISHED;
-      } else if (req.user!.role === Role.FACULTY) {
-        // Faculty see results for their exams
-        whereClause.exam = { createdById: req.user!.id };
-      }
-      // Admin sees all
-
-      const [results, total] = await Promise.all([
-        prisma.examResult.findMany({
-          where: whereClause,
-          include: {
-            exam: {
-              select: { id: true, title: true, totalPoints: true, passingScore: true },
-            },
-            student: {
-              select: {
-                studentNumber: true,
-                user: { select: { firstName: true, lastName: true } },
-              },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip,
-          take: Number(limit),
-        }),
-        prisma.examResult.count({ where: whereClause }),
-      ]);
-
-      res.json({
-        success: true,
-        data: results,
-        pagination: {
-          page: Number(page),
-          limit: Number(limit),
-          total,
-          totalPages: Math.ceil(total / Number(limit)),
-        },
-      });
-    } catch (error) {
-      logger.error('Get results error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch results' },
-      });
-    }
-  }
-);
-
-/**
- * @route   GET /api/v1/results/:id
- * @desc    Get result by ID
- * @access  Private
- */
-router.get('/:id', authenticate, idParamValidator, async (req: Request, res: Response): Promise<void> => {
+router.get('/', authenticate, paginationValidator, async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await prisma.examResult.findUnique({
-      where: { id: req.params.id },
-      include: {
-        exam: {
-          select: {
-            id: true,
-            title: true,
-            totalPoints: true,
-            passingScore: true,
-            course: { select: { code: true, name: true } },
-            createdBy: { select: { firstName: true, lastName: true } },
-          },
-        },
-        student: {
-          select: {
-            id: true,
-            studentNumber: true,
-            program: true,
-            user: { select: { id: true, firstName: true, lastName: true } },
-          },
-        },
-        regradeRequests: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            requester: { select: { firstName: true, lastName: true } },
-            responder: { select: { firstName: true, lastName: true } },
-          },
-        },
-      },
-    });
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
 
-    if (!result) {
-      res.status(404).json({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'Result not found' },
-      });
-      return;
-    }
+    let filter: any = {};
 
-    // Check access
+    // Students only see their own published results
     if (req.user!.role === Role.STUDENT) {
-      if (result.student.user.id !== req.user!.id || result.status !== ResultStatus.PUBLISHED) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You do not have access to this result' },
-        });
-        return;
-      }
+      filter.studentId = req.user!.id;
+      filter.status = ResultStatus.PUBLISHED;
     }
+
+    if (req.query.examId) filter.examId = req.query.examId;
+    if (req.query.studentId && req.user!.role !== Role.STUDENT) filter.studentId = req.query.studentId;
+    if (req.query.status && req.user!.role !== Role.STUDENT) filter.status = req.query.status;
+
+    const [results, total] = await Promise.all([
+      ExamResult.find(filter)
+        .populate('examId', 'title type totalPoints passingScore courseId')
+        .populate('studentId', 'firstName lastName email studentNumber')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      ExamResult.countDocuments(filter),
+    ]);
 
     res.json({
       success: true,
-      data: result,
+      data: { results, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
     });
   } catch (error) {
-    logger.error('Get result error:', error);
-    res.status(500).json({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch result' },
-    });
+    logger.error('List results error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch results' } });
   }
 });
 
 /**
- * @route   POST /api/v1/results
- * @desc    Create/publish exam result
- * @access  Private (Faculty, Admin)
+ * GET /api/v1/results/exam/:examId
+ * Get all results for an exam (Faculty/Admin)
  */
-router.post(
-  '/',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  createResultValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { examId, studentId, score, remarks } = req.body;
+router.get('/exam/:examId', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const results = await ExamResult.find({ examId: req.params.examId })
+      .populate('studentId', 'firstName lastName email studentNumber section')
+      .sort({ score: -1 });
 
-      // Verify exam exists and user has permission
-      const exam = await prisma.exam.findUnique({ where: { id: examId } });
-      if (!exam) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_EXAM', message: 'Exam not found' },
-        });
-        return;
-      }
+    const exam = await Exam.findById(req.params.examId).select('title totalPoints passingScore');
 
-      if (req.user!.role !== Role.ADMIN && exam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only add results to your own exams' },
-        });
-        return;
-      }
+    // Calculate statistics
+    const scores = results.map(r => r.score);
+    const stats = {
+      count: results.length,
+      average: scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0,
+      highest: scores.length ? Math.max(...scores) : 0,
+      lowest: scores.length ? Math.min(...scores) : 0,
+      passed: exam?.passingScore ? results.filter(r => r.score >= exam.passingScore!).length : 0,
+    };
 
-      // Check for existing result
-      const existingResult = await prisma.examResult.findFirst({
-        where: { examId, studentId },
-      });
-
-      if (existingResult) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'DUPLICATE', message: 'Result already exists for this student' },
-        });
-        return;
-      }
-
-      const result = await prisma.examResult.create({
-        data: {
-          examId,
-          studentId,
-          score,
-          remarks,
-          status: ResultStatus.PENDING,
-        },
-        include: {
-          exam: { select: { title: true } },
-          student: {
-            select: {
-              studentNumber: true,
-              user: { select: { firstName: true, lastName: true } },
-            },
-          },
-        },
-      });
-
-      // Log creation
-      await logEntityChange(req, 'CREATE', 'ExamResult', result.id, { examId, studentId, score });
-
-      logger.info(`Result created for exam ${examId}, student ${studentId}`);
-
-      res.status(201).json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      logger.error('Create result error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to create result' },
-      });
-    }
+    res.json({ success: true, data: { results, exam, stats } });
+  } catch (error) {
+    logger.error('Get exam results error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch results' } });
   }
-);
+});
 
 /**
- * @route   POST /api/v1/results/bulk
- * @desc    Create multiple results at once
- * @access  Private (Faculty, Admin)
+ * GET /api/v1/results/:id
+ * Get result details
  */
-router.post(
-  '/bulk',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { examId, results } = req.body;
+router.get('/:id', authenticate, mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await ExamResult.findById(req.params.id)
+      .populate('examId', 'title type totalPoints passingScore courseId')
+      .populate('studentId', 'firstName lastName email studentNumber')
+      .populate('regradeRequests.respondedById', 'firstName lastName');
 
-      if (!examId || !Array.isArray(results) || results.length === 0) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_INPUT', message: 'examId and results array required' },
-        });
+    if (!result) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+      return;
+    }
+
+    // Students can only see their own results
+    if (req.user!.role === Role.STUDENT) {
+      if (result.studentId._id.toString() !== req.user!.id || result.status !== ResultStatus.PUBLISHED) {
+        res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } });
         return;
       }
+    }
 
-      // Verify exam
-      const exam = await prisma.exam.findUnique({ where: { id: examId } });
-      if (!exam) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_EXAM', message: 'Exam not found' },
-        });
-        return;
-      }
+    res.json({ success: true, data: { result } });
+  } catch (error) {
+    logger.error('Get result error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch result' } });
+  }
+});
 
-      if (req.user!.role !== Role.ADMIN && exam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only add results to your own exams' },
-        });
-        return;
-      }
+/**
+ * POST /api/v1/results
+ * Create a single result
+ */
+router.post('/', authenticate, authorize(Role.ADMIN, Role.FACULTY), createResultValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { examId, studentId, score, remarks } = req.body;
 
-      // Create results
-      const createdResults = await prisma.$transaction(
-        results.map((r: { studentId: string; score: number; remarks?: string }) =>
-          prisma.examResult.create({
-            data: {
-              examId,
-              studentId: r.studentId,
-              score: r.score,
-              remarks: r.remarks,
-              status: ResultStatus.PENDING,
-            },
-          })
-        )
+    // Check if exam exists
+    const exam = await Exam.findById(examId);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    // Check if student is enrolled
+    const enrollment = await Enrollment.findOne({ studentId, courseId: exam.courseId, status: EnrollmentStatus.ENROLLED });
+    if (!enrollment) {
+      res.status(400).json({ success: false, error: { code: 'NOT_ENROLLED', message: 'Student not enrolled in this course' } });
+      return;
+    }
+
+    // Check for existing result
+    const existing = await ExamResult.findOne({ examId, studentId });
+    if (existing) {
+      res.status(400).json({ success: false, error: { code: 'DUPLICATE', message: 'Result already exists for this student' } });
+      return;
+    }
+
+    const result = await ExamResult.create({ examId, studentId, score, remarks });
+    await result.populate('studentId', 'firstName lastName studentNumber');
+
+    res.status(201).json({ success: true, data: { result } });
+  } catch (error) {
+    logger.error('Create result error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create result' } });
+  }
+});
+
+/**
+ * POST /api/v1/results/bulk
+ * Create multiple results at once
+ */
+router.post('/bulk', authenticate, authorize(Role.ADMIN, Role.FACULTY), bulkResultValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { examId, results: resultData } = req.body;
+
+    const exam = await Exam.findById(examId);
+    if (!exam) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+      return;
+    }
+
+    // Create results using upsert
+    const operations = resultData.map((r: { studentId: string; score: number; remarks?: string }) => ({
+      updateOne: {
+        filter: { examId, studentId: r.studentId },
+        update: { $set: { score: r.score, remarks: r.remarks } },
+        upsert: true,
+      },
+    }));
+
+    const bulkResult = await ExamResult.bulkWrite(operations);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        message: `Created/updated ${bulkResult.upsertedCount + bulkResult.modifiedCount} results`,
+        created: bulkResult.upsertedCount,
+        updated: bulkResult.modifiedCount,
+      },
+    });
+  } catch (error) {
+    logger.error('Bulk create results error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to create results' } });
+  }
+});
+
+/**
+ * PUT /api/v1/results/:id
+ * Update a result
+ */
+router.put('/:id', authenticate, authorize(Role.ADMIN, Role.FACULTY), mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { score, remarks } = req.body;
+
+    const result = await ExamResult.findById(req.params.id);
+    if (!result) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+      return;
+    }
+
+    if (score !== undefined) result.score = score;
+    if (remarks !== undefined) result.remarks = remarks;
+
+    await result.save();
+    await result.populate('studentId', 'firstName lastName studentNumber');
+
+    res.json({ success: true, data: { result } });
+  } catch (error) {
+    logger.error('Update result error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update result' } });
+  }
+});
+
+/**
+ * PUT /api/v1/results/:id/publish
+ * Publish a result (make visible to student)
+ */
+router.put('/:id/publish', authenticate, authorize(Role.ADMIN, Role.FACULTY), mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await ExamResult.findById(req.params.id).populate('examId', 'title');
+    if (!result) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+      return;
+    }
+
+    result.status = ResultStatus.PUBLISHED;
+    result.publishedAt = new Date();
+    await result.save();
+
+    // Notify student
+    await notificationService.notify(
+      result.studentId.toString(),
+      NotificationType.RESULT_PUBLISHED,
+      'Result Published',
+      `Your result for ${(result.examId as any).title} is now available`,
+      { resultId: result._id, examId: result.examId }
+    );
+
+    wsService.sendToUser(result.studentId.toString(), 'result:published', { resultId: result._id });
+
+    res.json({ success: true, data: { result } });
+  } catch (error) {
+    logger.error('Publish result error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to publish result' } });
+  }
+});
+
+/**
+ * PUT /api/v1/results/publish-bulk
+ * Publish multiple results
+ */
+router.put('/publish-bulk', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { resultIds } = req.body;
+
+    if (!Array.isArray(resultIds) || resultIds.length === 0) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'resultIds array required' } });
+      return;
+    }
+
+    await ExamResult.updateMany(
+      { _id: { $in: resultIds } },
+      { status: ResultStatus.PUBLISHED, publishedAt: new Date() }
+    );
+
+    // Get updated results for notifications
+    const results = await ExamResult.find({ _id: { $in: resultIds } }).populate('examId', 'title');
+    
+    for (const result of results) {
+      await notificationService.notify(
+        result.studentId.toString(),
+        NotificationType.RESULT_PUBLISHED,
+        'Result Published',
+        `Your result for ${(result.examId as any).title} is now available`,
+        { resultId: result._id }
       );
-
-      // Log bulk creation
-      await logEntityChange(req, 'CREATE', 'ExamResult', examId, { count: createdResults.length });
-
-      res.status(201).json({
-        success: true,
-        data: {
-          created: createdResults.length,
-          results: createdResults,
-        },
-      });
-    } catch (error) {
-      logger.error('Bulk create results error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to create results' },
-      });
     }
+
+    res.json({ success: true, data: { message: `Published ${resultIds.length} results` } });
+  } catch (error) {
+    logger.error('Bulk publish results error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to publish results' } });
   }
-);
+});
 
 /**
- * @route   PUT /api/v1/results/:id/publish
- * @desc    Publish result (make visible to student)
- * @access  Private (Faculty, Admin)
+ * POST /api/v1/results/:id/regrade
+ * Request a regrade (Student)
  */
-router.put(
-  '/:id/publish',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  idParamValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const resultId = req.params.id;
+router.post('/:id/regrade', authenticate, authorize(Role.STUDENT), regradeRequestValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { reason } = req.body;
 
-      const result = await prisma.examResult.findUnique({
-        where: { id: resultId },
-        include: {
-          exam: { select: { title: true, createdById: true } },
-          student: { select: { id: true } },
-        },
-      });
+    const result = await ExamResult.findById(req.params.id).populate('examId', 'title courseId');
+    if (!result) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+      return;
+    }
 
-      if (!result) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Result not found' },
-        });
-        return;
-      }
+    if (result.studentId.toString() !== req.user!.id) {
+      res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Not your result' } });
+      return;
+    }
 
-      if (req.user!.role !== Role.ADMIN && result.exam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only publish results for your own exams' },
-        });
-        return;
-      }
+    if (result.status !== ResultStatus.PUBLISHED) {
+      res.status(400).json({ success: false, error: { code: 'NOT_PUBLISHED', message: 'Result not yet published' } });
+      return;
+    }
 
-      const updatedResult = await prisma.examResult.update({
-        where: { id: resultId },
-        data: {
-          status: ResultStatus.PUBLISHED,
-          publishedAt: new Date(),
-        },
-      });
+    // Check if there's already a pending regrade
+    const hasPending = result.regradeRequests.some(r => r.status === RegradeStatus.PENDING);
+    if (hasPending) {
+      res.status(400).json({ success: false, error: { code: 'PENDING_EXISTS', message: 'You already have a pending regrade request' } });
+      return;
+    }
 
-      // Log and notify
-      await logEntityChange(req, 'UPDATE', 'ExamResult', resultId, { status: 'PUBLISHED' });
-      await notificationService.notifyResultPublished(
-        result.exam.title,
-        result.exam.title,
-        result.student.id,
-        resultId
+    result.regradeRequests.push({ reason, status: RegradeStatus.PENDING, requestedAt: new Date() });
+    await result.save();
+
+    // Notify faculty
+    const exam = result.examId as any;
+    const course = await (await import('../models')).Course.findById(exam.courseId);
+    if (course) {
+      await notificationService.notify(
+        course.facultyId.toString(),
+        NotificationType.SYSTEM,
+        'Regrade Request',
+        `New regrade request for ${exam.title}`,
+        { resultId: result._id, studentId: req.user!.id }
       );
-
-      res.json({
-        success: true,
-        data: updatedResult,
-      });
-    } catch (error) {
-      logger.error('Publish result error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to publish result' },
-      });
     }
+
+    res.status(201).json({ success: true, data: { message: 'Regrade request submitted' } });
+  } catch (error) {
+    logger.error('Request regrade error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to submit regrade request' } });
   }
-);
+});
 
 /**
- * @route   POST /api/v1/results/:id/regrade
- * @desc    Request regrade
- * @access  Private (Student)
+ * PUT /api/v1/results/:id/regrade/:regradeId
+ * Respond to a regrade request (Faculty/Admin)
  */
-router.post(
-  '/:id/regrade',
-  authenticate,
-  authorize(Role.STUDENT),
-  regradeRequestValidator,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const resultId = req.params.id;
-      const { reason } = req.body;
+router.put('/:id/regrade/:regradeId', authenticate, authorize(Role.ADMIN, Role.FACULTY), regradeResponseValidator, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { status, response, newScore } = req.body;
 
-      // Get student
-      const student = await prisma.student.findFirst({
-        where: { userId: req.user!.id },
-      });
-
-      if (!student) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'NOT_STUDENT', message: 'Student profile not found' },
-        });
-        return;
-      }
-
-      // Get result and verify ownership
-      const result = await prisma.examResult.findUnique({
-        where: { id: resultId },
-        include: {
-          exam: { select: { title: true, createdById: true } },
-        },
-      });
-
-      if (!result) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Result not found' },
-        });
-        return;
-      }
-
-      if (result.studentId !== student.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only request regrade for your own results' },
-        });
-        return;
-      }
-
-      // Check for existing pending request
-      const existingRequest = await prisma.regradeRequest.findFirst({
-        where: {
-          resultId,
-          studentId: student.id,
-          status: RegradeStatus.PENDING,
-        },
-      });
-
-      if (existingRequest) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'DUPLICATE', message: 'You already have a pending regrade request' },
-        });
-        return;
-      }
-
-      // Create regrade request
-      const regradeRequest = await prisma.regradeRequest.create({
-        data: {
-          resultId,
-          studentId: student.id,
-          requesterId: req.user!.id,
-          reason,
-        },
-      });
-
-      // Update result status
-      await prisma.examResult.update({
-        where: { id: resultId },
-        data: { status: ResultStatus.UNDER_REVIEW },
-      });
-
-      // Log and notify faculty
-      await logEntityChange(req, 'CREATE', 'RegradeRequest', regradeRequest.id, { resultId, reason });
-
-      // Notify the exam creator
-      await notificationService.notifyUser(result.exam.createdById, {
-        type: 'regrade_request',
-        title: 'New Regrade Request',
-        message: `A student has requested a regrade for ${result.exam.title}`,
-        resultId,
-      });
-
-      res.status(201).json({
-        success: true,
-        data: regradeRequest,
-      });
-    } catch (error) {
-      logger.error('Create regrade request error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to create regrade request' },
-      });
+    const result = await ExamResult.findById(req.params.id);
+    if (!result) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+      return;
     }
+
+    const regrade = result.regradeRequests.id(req.params.regradeId);
+    if (!regrade) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Regrade request not found' } });
+      return;
+    }
+
+    regrade.status = status;
+    regrade.response = response;
+    regrade.respondedById = req.user!.id as any;
+    regrade.respondedAt = new Date();
+
+    // Update score if approved and new score provided
+    if (status === RegradeStatus.APPROVED && newScore !== undefined) {
+      result.score = newScore;
+    }
+
+    await result.save();
+
+    // Notify student
+    await notificationService.notify(
+      result.studentId.toString(),
+      NotificationType.REGRADE_RESPONSE,
+      `Regrade Request ${status}`,
+      response,
+      { resultId: result._id, status }
+    );
+
+    res.json({ success: true, data: { result } });
+  } catch (error) {
+    logger.error('Respond to regrade error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to respond to regrade' } });
   }
-);
+});
 
 /**
- * @route   PUT /api/v1/results/regrade/:id/respond
- * @desc    Respond to regrade request
- * @access  Private (Faculty, Admin)
+ * GET /api/v1/results/regrades/pending
+ * Get pending regrade requests (Faculty/Admin)
  */
-router.put(
-  '/regrade/:id/respond',
-  authenticate,
-  authorize(Role.FACULTY, Role.ADMIN),
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const requestId = req.params.id;
-      const { status, response, newScore } = req.body;
+router.get('/regrades/pending', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const results = await ExamResult.find({
+      'regradeRequests.status': RegradeStatus.PENDING,
+    })
+      .populate('examId', 'title courseId')
+      .populate('studentId', 'firstName lastName studentNumber');
 
-      if (!['APPROVED', 'REJECTED', 'RESOLVED'].includes(status)) {
-        res.status(400).json({
-          success: false,
-          error: { code: 'INVALID_STATUS', message: 'Invalid status' },
-        });
-        return;
-      }
+    // Filter to only include pending requests
+    const pendingRequests = results.flatMap(result => 
+      result.regradeRequests
+        .filter(r => r.status === RegradeStatus.PENDING)
+        .map(r => ({
+          resultId: result._id,
+          examId: result.examId,
+          studentId: result.studentId,
+          score: result.score,
+          regradeId: r._id,
+          reason: r.reason,
+          requestedAt: r.requestedAt,
+        }))
+    );
 
-      const regradeRequest = await prisma.regradeRequest.findUnique({
-        where: { id: requestId },
-        include: {
-          result: {
-            include: { exam: { select: { createdById: true, title: true } } },
-          },
-          student: { include: { user: { select: { id: true } } } },
-        },
-      });
-
-      if (!regradeRequest) {
-        res.status(404).json({
-          success: false,
-          error: { code: 'NOT_FOUND', message: 'Regrade request not found' },
-        });
-        return;
-      }
-
-      if (req.user!.role !== Role.ADMIN && regradeRequest.result.exam.createdById !== req.user!.id) {
-        res.status(403).json({
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'You can only respond to requests for your own exams' },
-        });
-        return;
-      }
-
-      // Update regrade request
-      const updatedRequest = await prisma.regradeRequest.update({
-        where: { id: requestId },
-        data: {
-          status,
-          response,
-          responderId: req.user!.id,
-          respondedAt: new Date(),
-        },
-      });
-
-      // If approved and new score provided, update the result
-      if (status === 'APPROVED' && newScore !== undefined) {
-        await prisma.examResult.update({
-          where: { id: regradeRequest.resultId },
-          data: {
-            score: newScore,
-            status: ResultStatus.PUBLISHED,
-          },
-        });
-      } else {
-        // Reset status to published
-        await prisma.examResult.update({
-          where: { id: regradeRequest.resultId },
-          data: { status: ResultStatus.PUBLISHED },
-        });
-      }
-
-      // Log and notify student
-      await logEntityChange(req, 'UPDATE', 'RegradeRequest', requestId, { status, response });
-
-      await notificationService.notifyUser(regradeRequest.student.user.id, {
-        type: 'regrade_response',
-        title: 'Regrade Request ' + status.charAt(0) + status.slice(1).toLowerCase(),
-        message: `Your regrade request for ${regradeRequest.result.exam.title} has been ${status.toLowerCase()}`,
-        resultId: regradeRequest.resultId,
-      });
-
-      res.json({
-        success: true,
-        data: updatedRequest,
-      });
-    } catch (error) {
-      logger.error('Respond to regrade error:', error);
-      res.status(500).json({
-        success: false,
-        error: { code: 'INTERNAL_ERROR', message: 'Failed to respond to regrade request' },
-      });
-    }
+    res.json({ success: true, data: { requests: pendingRequests } });
+  } catch (error) {
+    logger.error('Get pending regrades error:', error);
+    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch regrade requests' } });
   }
-);
+});
 
 export default router;

@@ -1,224 +1,164 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, LogIn, AlertCircle, Loader2 } from 'lucide-react';
-import { authApi } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
-import toast from 'react-hot-toast';
+import { authApi } from '@/services/api';
+import { Eye, EyeOff, GraduationCap } from 'lucide-react';
 
 const LoginPage = () => {
-  const navigate = useNavigate();
-  const { login } = useAuthStore();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const { setAuth } = useAuthStore();
+  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
+    setLoading(true);
 
     try {
-      const response = await authApi.login({ email, password });
-
-      if (response.success && response.data) {
-        login(response.data.user, response.data.tokens);
-        toast.success(`Welcome back, ${response.data.user.firstName}!`);
-        navigate('/dashboard');
-      } else {
-        setError(response.error?.message || 'Login failed');
-      }
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: { message?: string } } } };
-      setError(error.response?.data?.error?.message || 'An error occurred');
+      const response = await authApi.login(email, password);
+      const { user, tokens } = response.data.data;
+      setAuth(user, tokens);
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || 'Login failed');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
+  };
+
+  const fillCredentials = (email: string) => {
+    setEmail(email);
+    setPassword('password123');
   };
 
   return (
     <div className="min-h-screen flex">
-      {/* Left Panel - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary-700 via-primary-800 to-primary-900 relative overflow-hidden">
-        {/* Background pattern */}
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute inset-0" style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }} />
-        </div>
-
-        <div className="relative z-10 flex flex-col justify-center px-12 xl:px-20">
-          <div className="mb-8">
-            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-              <span className="text-3xl">🎓</span>
+      {/* Left side - branding */}
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary-600 to-primary-800 text-white p-12 flex-col justify-center">
+        <div className="max-w-md">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+              <GraduationCap className="w-7 h-7" />
             </div>
+            <h1 className="text-3xl font-bold">ExamFlow</h1>
           </div>
-
-          <h1 className="text-4xl xl:text-5xl font-display font-bold text-white mb-4">
-            ExamFlow
-          </h1>
-          <p className="text-xl text-primary-100 mb-8 max-w-md">
-            Exam Information Management System for UP Tacloban
-          </p>
-
-          <div className="space-y-4 text-primary-200">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                <span className="text-sm">📋</span>
-              </div>
-              <span>Create and manage examinations</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                <span className="text-sm">🔔</span>
-              </div>
-              <span>Real-time announcements & notifications</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                <span className="text-sm">📊</span>
-              </div>
-              <span>Results publishing & regrade workflows</span>
-            </div>
-          </div>
+          <p className="text-xl mb-6">Exam Information Management System for UP Tacloban</p>
+          <ul className="space-y-4 text-white/80">
+            <li className="flex items-center gap-3">
+              <span className="w-2 h-2 bg-white/60 rounded-full" />
+              Create and manage examinations
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="w-2 h-2 bg-white/60 rounded-full" />
+              Real-time announcements & notifications
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="w-2 h-2 bg-white/60 rounded-full" />
+              Results publishing & regrade workflows
+            </li>
+          </ul>
         </div>
-
-        {/* Decorative elements */}
-        <div className="absolute bottom-0 left-0 right-0 h-64 bg-gradient-to-t from-primary-900/50 to-transparent" />
       </div>
 
-      {/* Right Panel - Login Form */}
+      {/* Right side - login form */}
       <div className="flex-1 flex items-center justify-center p-8 bg-gray-50">
         <div className="w-full max-w-md">
-          {/* Mobile logo */}
-          <div className="lg:hidden text-center mb-8">
-            <div className="w-16 h-16 bg-primary-700 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-3xl">🎓</span>
+          <div className="lg:hidden flex items-center gap-3 mb-8">
+            <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center">
+              <GraduationCap className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-2xl font-display font-bold text-gray-900">ExamFlow</h1>
+            <h1 className="text-2xl font-bold text-gray-900">ExamFlow</h1>
           </div>
 
           <div className="card p-8">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-display font-bold text-gray-900">Welcome back</h2>
-              <p className="text-gray-500 mt-2">Sign in to your account</p>
-            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome back</h2>
+            <p className="text-gray-600 mb-6">Sign in to your account</p>
 
             {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3 animate-shake">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-red-700">{error}</p>
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+                {error}
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Email address
                 </label>
                 <input
-                  id="email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="input"
                   placeholder="you@up.edu.ph"
                   required
-                  autoComplete="email"
-                  disabled={isLoading}
                 />
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1.5">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Password
                 </label>
                 <div className="relative">
                   <input
-                    id="password"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="input pr-10"
                     placeholder="••••••••"
                     required
-                    autoComplete="current-password"
-                    disabled={isLoading}
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    tabIndex={-1}
+                    onClick={() => setShowPassword(!showPassword)}
                   >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={isLoading}
-                className="btn-primary w-full py-2.5"
+                disabled={loading}
+                className="btn btn-primary w-full flex items-center justify-center gap-2"
               >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Signing in...
-                  </>
+                {loading ? (
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : (
-                  <>
-                    <LogIn className="w-5 h-5 mr-2" />
-                    Sign in
-                  </>
+                  'Sign in'
                 )}
               </button>
             </form>
 
             {/* Demo credentials */}
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <p className="text-xs text-gray-500 text-center mb-3">Demo Credentials</p>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('admin@up.edu.ph');
-                    setPassword('password123');
-                  }}
-                  className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-center"
-                >
-                  <div className="font-medium text-gray-700">Admin</div>
-                  <div className="text-gray-500 truncate">admin@up.edu.ph</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('faculty@up.edu.ph');
-                    setPassword('password123');
-                  }}
-                  className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-center"
-                >
-                  <div className="font-medium text-gray-700">Faculty</div>
-                  <div className="text-gray-500 truncate">faculty@up.edu.ph</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('student@up.edu.ph');
-                    setPassword('password123');
-                  }}
-                  className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-center"
-                >
-                  <div className="font-medium text-gray-700">Student</div>
-                  <div className="text-gray-500 truncate">student@up.edu.ph</div>
-                </button>
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <p className="text-sm text-gray-500 text-center mb-3">Demo Credentials</p>
+              <div className="flex gap-2">
+                {[
+                  { label: 'Admin', email: 'admin@up.edu.ph' },
+                  { label: 'Faculty', email: 'faculty@up.edu.ph' },
+                  { label: 'Student', email: 'student@up.edu.ph' },
+                ].map((cred) => (
+                  <button
+                    key={cred.email}
+                    type="button"
+                    onClick={() => fillCredentials(cred.email)}
+                    className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    {cred.label}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
 
-          <p className="mt-6 text-center text-sm text-gray-500">
+          <p className="text-center text-sm text-gray-500 mt-6">
             CMSC 135 • Data Communication and Networking
           </p>
         </div>
