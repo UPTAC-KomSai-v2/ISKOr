@@ -11,6 +11,7 @@ export interface IEnrollment extends Document {
   studentId: mongoose.Types.ObjectId;
   courseId: mongoose.Types.ObjectId;
   status: EnrollmentStatus;
+  isActive: boolean;
   enrolledAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -32,6 +33,10 @@ const enrollmentSchema = new Schema<IEnrollment>(
       type: String,
       enum: Object.values(EnrollmentStatus),
       default: EnrollmentStatus.ENROLLED,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
     },
     enrolledAt: {
       type: Date,

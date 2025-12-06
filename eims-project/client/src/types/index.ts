@@ -6,10 +6,11 @@ export enum Role {
 
 export enum ExamStatus {
   DRAFT = 'DRAFT',
-  SCHEDULED = 'SCHEDULED',
-  ONGOING = 'ONGOING',
+  PUBLISHED = 'PUBLISHED',
+  ACTIVE = 'ACTIVE',
+  CLOSED = 'CLOSED',
+  GRADING = 'GRADING',
   COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
 }
 
 export enum ExamType {
@@ -17,7 +18,7 @@ export enum ExamType {
   MIDTERM = 'MIDTERM',
   FINAL = 'FINAL',
   PRACTICAL = 'PRACTICAL',
-  ORAL = 'ORAL',
+  ASSIGNMENT = 'ASSIGNMENT',
 }
 
 export interface User {
@@ -27,9 +28,13 @@ export interface User {
   firstName: string;
   lastName: string;
   role: Role;
+  profilePhoto?: string;
+  bio?: string;
+  phoneNumber?: string;
   studentNumber?: string;
   facultyId?: string;
   department?: string;
+  designation?: string;
   program?: string;
   yearLevel?: number;
   section?: string;
@@ -46,28 +51,30 @@ export interface Course {
   isActive: boolean;
 }
 
-export interface ExamSchedule {
-  _id: string;
-  section: string;
-  room?: string;
-  meetingLink?: string;
-  startTime: string;
-  endTime: string;
-  instructions?: string;
-}
-
 export interface Exam {
   _id: string;
   title: string;
   description?: string;
+  instructions?: string;
   courseId: Course;
   createdById: User;
   type: ExamType;
   status: ExamStatus;
   totalPoints: number;
-  passingScore?: number;
-  schedules: ExamSchedule[];
-  guidelines?: string;
+  questionCount: number;
+  startDate?: string;
+  endDate?: string;
+  settings: {
+    shuffleQuestions: boolean;
+    shuffleChoices: boolean;
+    showResults: boolean;
+    showCorrectAnswers: boolean;
+    showFeedback: boolean;
+    allowReview: boolean;
+    maxAttempts: number;
+    timeLimitMinutes?: number;
+    passingPercentage: number;
+  };
   createdAt: string;
   updatedAt: string;
 }

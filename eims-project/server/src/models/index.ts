@@ -3,6 +3,8 @@ export * from './RefreshToken';
 export * from './Course';
 export * from './Enrollment';
 export * from './Exam';
+export * from './Question';
+export * from './ExamSubmission';
 export * from './ExamResult';
 export * from './Announcement';
 export * from './Notification';

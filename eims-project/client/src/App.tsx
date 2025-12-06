@@ -5,10 +5,15 @@ import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import CoursesPage from '@/pages/CoursesPage';
 import ExamsPage from '@/pages/ExamsPage';
+import ExamCreatorPage from '@/pages/ExamCreatorPage';
+import TakeExamPage from '@/pages/TakeExamPage';
 import ResultsPage from '@/pages/ResultsPage';
+import ViewSubmissionPage from '@/pages/ViewSubmissionPage';
 import AnnouncementsPage from '@/pages/AnnouncementsPage';
 import UsersPage from '@/pages/UsersPage';
 import NotificationsPage from '@/pages/NotificationsPage';
+import ProfilePage from '@/pages/ProfilePage';
+import ProfileSettingsPage from '@/pages/ProfileSettingsPage';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated } = useAuthStore();
@@ -31,10 +36,15 @@ function App() {
                   <Route path="/dashboard" element={<DashboardPage />} />
                   <Route path="/courses" element={<CoursesPage />} />
                   <Route path="/exams" element={<ExamsPage />} />
+                  <Route path="/exams/:examId/edit" element={<ExamCreatorPage />} />
+                  <Route path="/exams/:examId/take" element={<TakeExamPage />} />
                   <Route path="/results" element={<ResultsPage />} />
+                  <Route path="/submissions/:submissionId" element={<ViewSubmissionPage />} />
                   <Route path="/announcements" element={<AnnouncementsPage />} />
                   <Route path="/users" element={<UsersPage />} />
                   <Route path="/notifications" element={<NotificationsPage />} />
+                  <Route path="/profile" element={<ProfilePage />} />
+                  <Route path="/profile/settings" element={<ProfileSettingsPage />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

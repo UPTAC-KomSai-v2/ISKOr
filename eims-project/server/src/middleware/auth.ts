@@ -10,6 +10,7 @@ declare global {
     interface Request {
       user?: {
         id: string;
+        _id: string;
         email: string;
         role: Role;
         firstName: string;
@@ -88,6 +89,7 @@ export const authenticate = async (
 
     req.user = {
       id: user._id.toString(),
+      _id: user._id.toString(),
       email: user.email,
       role: user.role,
       firstName: user.firstName,
@@ -168,4 +170,11 @@ export const generateRefreshToken = (payload: Omit<JwtPayload, 'iat' | 'exp' | '
  */
 export const verifyRefreshToken = (token: string): JwtPayload => {
   return jwt.verify(token, config.jwt.refreshSecret) as JwtPayload;
+};
+
+// Aliases for compatibility
+export const authenticateToken = authenticate;
+export const requireRole = (roles: Role | Role[]) => {
+  const roleArray = Array.isArray(roles) ? roles : [roles];
+  return authorize(...roleArray);
 };

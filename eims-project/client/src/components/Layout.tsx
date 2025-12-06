@@ -7,6 +7,7 @@ import { Role } from '@/types';
 import {
   LayoutDashboard, BookOpen, FileText, ClipboardList,
   Megaphone, Users, Bell, LogOut, Menu, X, Wifi, WifiOff,
+  User, Settings, ChevronDown,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -15,6 +16,7 @@ interface LayoutProps {
 
 const Layout = ({ children }: LayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const { user, logout, refreshToken } = useAuthStore();
   const location = useLocation();
@@ -28,9 +30,18 @@ const Layout = ({ children }: LayoutProps) => {
 
   useEffect(() => {
     notificationsApi.getUnreadCount()
-      .then((res) => setUnreadCount(res.data.data.count))
+      .then((res) => setUnreadCount(res.data.data?.count || res.data.count || 0))
       .catch(() => {});
   }, []);
+
+  // Close profile menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setProfileMenuOpen(false);
+    if (profileMenuOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [profileMenuOpen]);
 
   const handleLogout = async () => {
     try {
@@ -84,7 +95,7 @@ const Layout = ({ children }: LayoutProps) => {
 
         <nav className="p-4 space-y-1">
           {navigation.map((item) => {
-            const isActive = location.pathname === item.href;
+            const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/');
             return (
               <Link
                 key={item.name}
@@ -102,29 +113,6 @@ const Layout = ({ children }: LayoutProps) => {
             );
           })}
         </nav>
-
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-              <span className="text-primary-600 font-semibold">
-                {user?.firstName?.[0]}{user?.lastName?.[0]}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">
-                {user?.firstName} {user?.lastName}
-              </p>
-              <p className="text-xs text-gray-500 truncate">{user?.role}</p>
-            </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            Sign out
-          </button>
-        </div>
       </aside>
 
       {/* Main content */}
@@ -160,6 +148,68 @@ const Layout = ({ children }: LayoutProps) => {
                 </span>
               )}
             </Link>
+
+            {/* Profile dropdown */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProfileMenuOpen(!profileMenuOpen);
+                }}
+                className="flex items-center gap-2 p-1 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                {user?.profilePhoto ? (
+                  <img
+                    src={user.profilePhoto}
+                    alt="Profile"
+                    className="w-8 h-8 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
+                    <span className="text-primary-600 font-semibold text-sm">
+                      {user?.firstName?.[0]}{user?.lastName?.[0]}
+                    </span>
+                  </div>
+                )}
+                <div className="hidden sm:block text-left">
+                  <p className="text-sm font-medium text-gray-900">
+                    {user?.firstName} {user?.lastName}
+                  </p>
+                  <p className="text-xs text-gray-500">{user?.role}</p>
+                </div>
+                <ChevronDown className="w-4 h-4 text-gray-400" />
+              </button>
+
+              {/* Dropdown menu */}
+              {profileMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                  <Link
+                    to="/profile"
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    onClick={() => setProfileMenuOpen(false)}
+                  >
+                    <User className="w-4 h-4" />
+                    My Profile
+                  </Link>
+                  <Link
+                    to="/profile/settings"
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    onClick={() => setProfileMenuOpen(false)}
+                  >
+                    <Settings className="w-4 h-4" />
+                    Settings
+                  </Link>
+                  <hr className="my-1" />
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 

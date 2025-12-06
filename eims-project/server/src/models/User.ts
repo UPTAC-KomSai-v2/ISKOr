@@ -15,6 +15,10 @@ export interface IUser extends Document {
   lastName: string;
   role: Role;
   isActive: boolean;
+  // Profile fields
+  profilePhoto?: string;
+  bio?: string;
+  phoneNumber?: string;
   // Student-specific fields
   studentNumber?: string;
   program?: string;
@@ -61,6 +65,10 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
     },
+    // Profile fields
+    profilePhoto: String,
+    bio: { type: String, maxlength: 500 },
+    phoneNumber: String,
     // Student fields
     studentNumber: { type: String, sparse: true },
     program: String,

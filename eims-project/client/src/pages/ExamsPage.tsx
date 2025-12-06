@@ -45,7 +45,7 @@ const ExamsPage = () => {
     try {
       setLoading(true);
       const res = await examsApi.list({ status: statusFilter || undefined });
-      setExams(res.data.data.exams);
+      setExams(res.data);
     } catch (error) {
       console.error('Failed to fetch exams:', error);
     } finally {
@@ -56,7 +56,7 @@ const ExamsPage = () => {
   const fetchCourses = async () => {
     try {
       const res = await coursesApi.list();
-      setCourses(res.data.data.courses);
+      setCourses(res.data.data?.courses || res.data);
     } catch (error) {
       console.error('Failed to fetch courses:', error);
     }

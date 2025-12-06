@@ -5,76 +5,77 @@ export enum ExamType {
   MIDTERM = 'MIDTERM',
   FINAL = 'FINAL',
   PRACTICAL = 'PRACTICAL',
-  ORAL = 'ORAL',
+  ASSIGNMENT = 'ASSIGNMENT',
 }
 
 export enum ExamStatus {
   DRAFT = 'DRAFT',
-  SCHEDULED = 'SCHEDULED',
-  ONGOING = 'ONGOING',
+  PUBLISHED = 'PUBLISHED',
+  ACTIVE = 'ACTIVE',
+  CLOSED = 'CLOSED',
+  GRADING = 'GRADING',
   COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
 }
 
-export interface IExamSchedule {
-  _id?: mongoose.Types.ObjectId;
-  section: string;
-  room?: string;
-  meetingLink?: string;
-  startTime: Date;
-  endTime: Date;
-  instructions?: string;
-}
-
-export interface IExamFile {
-  _id?: mongoose.Types.ObjectId;
-  filename: string;
-  originalName: string;
-  mimeType: string;
-  size: number;
-  path: string;
-  uploadedAt: Date;
+export interface IExamSettings {
+  shuffleQuestions: boolean;
+  shuffleChoices: boolean;
+  showResults: boolean;
+  showCorrectAnswers: boolean;
+  showFeedback: boolean;
+  allowReview: boolean;
+  maxAttempts: number;
+  timeLimitMinutes?: number;
+  passingPercentage: number;
+  lateSubmissionAllowed: boolean;
+  lateSubmissionPenalty: number; // percentage deducted
 }
 
 export interface IExam extends Document {
   _id: mongoose.Types.ObjectId;
   title: string;
   description?: string;
+  instructions?: string;
   courseId: mongoose.Types.ObjectId;
   createdById: mongoose.Types.ObjectId;
   type: ExamType;
   status: ExamStatus;
   totalPoints: number;
-  passingScore?: number;
-  schedules: IExamSchedule[];
-  files: IExamFile[];
-  guidelines?: string;
+  questionCount: number;
+  // Timing
+  startDate?: Date;
+  endDate?: Date;
+  // Settings
+  settings: IExamSettings;
+  // Access
+  allowedSections?: string[];
+  // Files/attachments
+  attachments?: {
+    filename: string;
+    originalName: string;
+    mimeType: string;
+    size: number;
+    url: string;
+  }[];
   createdAt: Date;
   updatedAt: Date;
 }
 
-const examScheduleSchema = new Schema<IExamSchedule>(
+const examSettingsSchema = new Schema<IExamSettings>(
   {
-    section: { type: String, required: true },
-    room: String,
-    meetingLink: String,
-    startTime: { type: Date, required: true },
-    endTime: { type: Date, required: true },
-    instructions: String,
+    shuffleQuestions: { type: Boolean, default: false },
+    shuffleChoices: { type: Boolean, default: false },
+    showResults: { type: Boolean, default: true },
+    showCorrectAnswers: { type: Boolean, default: false },
+    showFeedback: { type: Boolean, default: true },
+    allowReview: { type: Boolean, default: true },
+    maxAttempts: { type: Number, default: 1 },
+    timeLimitMinutes: Number,
+    passingPercentage: { type: Number, default: 60 },
+    lateSubmissionAllowed: { type: Boolean, default: false },
+    lateSubmissionPenalty: { type: Number, default: 0 },
   },
-  { _id: true }
-);
-
-const examFileSchema = new Schema<IExamFile>(
-  {
-    filename: { type: String, required: true },
-    originalName: { type: String, required: true },
-    mimeType: { type: String, required: true },
-    size: { type: Number, required: true },
-    path: { type: String, required: true },
-    uploadedAt: { type: Date, default: Date.now },
-  },
-  { _id: true }
+  { _id: false }
 );
 
 const examSchema = new Schema<IExam>(
@@ -85,6 +86,7 @@ const examSchema = new Schema<IExam>(
       trim: true,
     },
     description: String,
+    instructions: String,
     courseId: {
       type: Schema.Types.ObjectId,
       ref: 'Course',
@@ -107,16 +109,26 @@ const examSchema = new Schema<IExam>(
     },
     totalPoints: {
       type: Number,
-      required: true,
-      min: 0,
+      default: 0,
     },
-    passingScore: {
+    questionCount: {
       type: Number,
-      min: 0,
+      default: 0,
     },
-    schedules: [examScheduleSchema],
-    files: [examFileSchema],
-    guidelines: String,
+    startDate: Date,
+    endDate: Date,
+    settings: {
+      type: examSettingsSchema,
+      default: () => ({}),
+    },
+    allowedSections: [String],
+    attachments: [{
+      filename: String,
+      originalName: String,
+      mimeType: String,
+      size: Number,
+      url: String,
+    }],
   },
   {
     timestamps: true,
@@ -126,6 +138,6 @@ const examSchema = new Schema<IExam>(
 examSchema.index({ courseId: 1 });
 examSchema.index({ createdById: 1 });
 examSchema.index({ status: 1 });
-examSchema.index({ 'schedules.startTime': 1 });
+examSchema.index({ startDate: 1, endDate: 1 });
 
 export const Exam = mongoose.model<IExam>('Exam', examSchema);
