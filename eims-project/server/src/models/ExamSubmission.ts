@@ -8,17 +8,11 @@ export enum SubmissionStatus {
 }
 
 export interface IAnswer {
-  _id?: mongoose.Types.ObjectId;
   questionId: mongoose.Types.ObjectId;
-  // For multiple choice - selected choice ID
   selectedChoiceId?: mongoose.Types.ObjectId;
-  // For true/false
   booleanAnswer?: boolean;
-  // For short answer / fill in blank / essay
   textAnswer?: string;
-  // For matching - array of {leftId, rightId}
   matchingAnswers?: { leftId: string; rightId: string }[];
-  // Grading
   pointsEarned: number;
   isCorrect?: boolean;
   feedback?: string;
@@ -67,7 +61,7 @@ const answerSchema = new Schema<IAnswer>(
     }],
     pointsEarned: { type: Number, default: 0 },
     isCorrect: Boolean,
-    feedback: String,
+    feedback: { type: String, default: '' },
     gradedAt: Date,
     gradedById: { type: Schema.Types.ObjectId, ref: 'User' },
   },
@@ -101,7 +95,7 @@ const examSubmissionSchema = new Schema<IExamSubmission>(
     maxScore: { type: Number, default: 0 },
     percentage: { type: Number, default: 0 },
     isPassing: { type: Boolean, default: false },
-    overallFeedback: String,
+    overallFeedback: { type: String, default: '' },
     attemptNumber: { type: Number, default: 1 },
     ipAddress: String,
     userAgent: String,
@@ -111,8 +105,18 @@ const examSubmissionSchema = new Schema<IExamSubmission>(
   }
 );
 
-// Compound index for unique submissions per student per exam per attempt
-examSubmissionSchema.index({ examId: 1, studentId: 1, attemptNumber: 1 }, { unique: true });
+// FIXED: Only create unique index on examId + studentId + status for IN_PROGRESS
+// This allows multiple completed submissions but only one in-progress
+examSubmissionSchema.index(
+  { examId: 1, studentId: 1, status: 1 },
+  { 
+    unique: true,
+    partialFilterExpression: { status: 'IN_PROGRESS' }
+  }
+);
+
+// Regular indexes for querying
+examSubmissionSchema.index({ examId: 1, studentId: 1 });
 examSubmissionSchema.index({ studentId: 1 });
 examSubmissionSchema.index({ status: 1 });
 examSubmissionSchema.index({ submittedAt: 1 });

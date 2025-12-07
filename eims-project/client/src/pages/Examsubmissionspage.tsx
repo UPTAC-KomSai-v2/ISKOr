@@ -14,6 +14,7 @@ import {
   Eye,
   BarChart3,
   Download,
+  MessageSquare,
 } from 'lucide-react';
 
 interface Student {
@@ -36,6 +37,7 @@ interface Submission {
   startedAt: string;
   submittedAt?: string;
   answers: Answer[];
+  overallFeedback?: string;
 }
 
 interface Answer {
@@ -101,6 +103,7 @@ const ExamSubmissionsPage = () => {
   const [gradingData, setGradingData] = useState<Record<string, { points: number; feedback: string }>>({});
   const [overallFeedback, setOverallFeedback] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   // Return modal
   const [showReturnModal, setShowReturnModal] = useState(false);
@@ -139,7 +142,7 @@ const ExamSubmissionsPage = () => {
       setSelectedSubmission(submissionRes.data.submission);
       setQuestions(questionsRes.data);
       
-      // Initialize grading data with existing grades
+      // Initialize grading data with existing grades and feedback
       const existingGrades: Record<string, { points: number; feedback: string }> = {};
       submissionRes.data.submission.answers.forEach((answer: Answer) => {
         existingGrades[answer.questionId] = {
@@ -155,6 +158,7 @@ const ExamSubmissionsPage = () => {
     }
   };
 
+  // FIXED: Handle grading a single question with feedback
   const handleGradeQuestion = async (questionId: string) => {
     if (!selectedSubmission) return;
     
@@ -163,6 +167,8 @@ const ExamSubmissionsPage = () => {
 
     try {
       setSaving(true);
+      setSaveMessage(null);
+      
       await api.put(`/submissions/${selectedSubmission._id}/grade/${questionId}`, {
         pointsEarned: gradeInfo.points,
         feedback: gradeInfo.feedback,
@@ -171,8 +177,12 @@ const ExamSubmissionsPage = () => {
       // Refresh submission data
       const res = await api.get(`/submissions/${selectedSubmission._id}`);
       setSelectedSubmission(res.data.submission);
+      
+      setSaveMessage('Grade and feedback saved!');
+      setTimeout(() => setSaveMessage(null), 2000);
     } catch (error) {
       console.error('Failed to grade question:', error);
+      setSaveMessage('Failed to save');
     } finally {
       setSaving(false);
     }
@@ -205,7 +215,20 @@ const ExamSubmissionsPage = () => {
       await api.post(`/submissions/exam/${examId}/return-all`);
       fetchData();
     } catch (error) {
-      console.error('Failed to return all:', error);
+      console.error('Failed to return all submissions:', error);
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'SUBMITTED':
+        return 'badge-warning';
+      case 'GRADED':
+        return 'badge-primary';
+      case 'RETURNED':
+        return 'badge-success';
+      default:
+        return 'badge-secondary';
     }
   };
 
@@ -213,35 +236,11 @@ const ExamSubmissionsPage = () => {
     return selectedSubmission?.answers.find((a) => a.questionId === questionId);
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'IN_PROGRESS':
-        return 'badge-warning';
-      case 'SUBMITTED':
-        return 'badge-primary';
-      case 'GRADED':
-        return 'badge-info';
-      case 'RETURNED':
-        return 'badge-success';
-      default:
-        return 'badge-gray';
-    }
-  };
-
   const filteredSubmissions = submissions.filter((s) => {
     if (activeTab === 'pending') return s.status === 'SUBMITTED';
     if (activeTab === 'graded') return s.status === 'GRADED' || s.status === 'RETURNED';
     return true;
   });
-
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
 
   if (loading) {
     return (
@@ -254,31 +253,31 @@ const ExamSubmissionsPage = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <button onClick={() => navigate('/exams')} className="p-2 hover:bg-gray-100 rounded-lg">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">{exam?.title} - Submissions</h1>
-          <p className="text-gray-600">{exam?.courseId.code} • {exam?.type}</p>
-        </div>
-        {submissions.some((s) => s.status === 'GRADED') && (
-          <button onClick={handleReturnAll} className="btn btn-primary flex items-center gap-2">
-            <Send className="w-4 h-4" />
-            Return All Graded
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/exams')} className="p-2 hover:bg-gray-100 rounded-lg">
+            <ArrowLeft className="w-5 h-5" />
           </button>
-        )}
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{exam?.title}</h1>
+            <p className="text-gray-500">{exam?.courseId?.code} • Submissions</p>
+          </div>
+        </div>
+        <button onClick={handleReturnAll} className="btn btn-primary flex items-center gap-2">
+          <Send className="w-4 h-4" />
+          Return All Graded
+        </button>
       </div>
 
       {/* Statistics */}
-      {statistics && statistics.totalSubmissions > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+      {statistics && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="card p-4 text-center">
             <p className="text-2xl font-bold text-gray-900">{statistics.totalSubmissions}</p>
             <p className="text-sm text-gray-500">Total</p>
           </div>
           <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-primary-600">{statistics.averageScore}%</p>
+            <p className="text-2xl font-bold text-blue-600">{statistics.averageScore}%</p>
             <p className="text-sm text-gray-500">Average</p>
           </div>
           <div className="card p-4 text-center">
@@ -294,124 +293,120 @@ const ExamSubmissionsPage = () => {
             <p className="text-sm text-gray-500">Passed</p>
           </div>
           <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-primary-600">{statistics.passingRate}%</p>
+            <p className="text-2xl font-bold text-purple-600">{statistics.passingRate}%</p>
             <p className="text-sm text-gray-500">Pass Rate</p>
           </div>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b">
+      <div className="flex gap-2 border-b border-gray-200">
         {(['all', 'pending', 'graded'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 font-medium border-b-2 transition-colors capitalize ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
               activeTab === tab
                 ? 'border-primary-600 text-primary-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            {tab} ({submissions.filter((s) => {
-              if (tab === 'pending') return s.status === 'SUBMITTED';
-              if (tab === 'graded') return s.status === 'GRADED' || s.status === 'RETURNED';
-              return true;
-            }).length})
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'pending' && (
+              <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded-full">
+                {submissions.filter((s) => s.status === 'SUBMITTED').length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Submissions List */}
-      {filteredSubmissions.length === 0 ? (
-        <div className="card p-12 text-center">
-          <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500">No submissions found</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filteredSubmissions.map((submission) => (
-            <div key={submission._id} className="card p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    submission.status === 'RETURNED'
-                      ? submission.isPassing ? 'bg-green-100' : 'bg-red-100'
-                      : submission.status === 'GRADED'
-                      ? 'bg-blue-100'
-                      : 'bg-yellow-100'
-                  }`}>
-                    {submission.status === 'RETURNED' ? (
-                      <CheckCircle className={`w-5 h-5 ${submission.isPassing ? 'text-green-600' : 'text-red-600'}`} />
-                    ) : submission.status === 'GRADED' ? (
-                      <CheckCircle className="w-5 h-5 text-blue-600" />
-                    ) : (
-                      <Clock className="w-5 h-5 text-yellow-600" />
-                    )}
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900">
-                      {submission.studentId.firstName} {submission.studentId.lastName}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {submission.studentId.studentNumber}
-                      {submission.studentId.section && ` • Section ${submission.studentId.section}`}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    {submission.submittedAt && (
-                      <p className="text-sm text-gray-500">
-                        Submitted {formatDate(submission.submittedAt)}
+      {/* Submissions Table */}
+      <div className="card overflow-hidden">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Student</th>
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Submitted</th>
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Score</th>
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Status</th>
+              <th className="px-4 py-3 text-right text-sm font-medium text-gray-500">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {filteredSubmissions.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                  No submissions found
+                </td>
+              </tr>
+            ) : (
+              filteredSubmissions.map((submission) => (
+                <tr key={submission._id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div>
+                      <p className="font-medium text-gray-900">
+                        {submission.studentId.firstName} {submission.studentId.lastName}
                       </p>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <span className={`badge ${getStatusBadge(submission.status)}`}>
-                        {submission.status}
-                      </span>
-                      {(submission.status === 'GRADED' || submission.status === 'RETURNED') && (
-                        <span className={`font-bold ${submission.isPassing ? 'text-green-600' : 'text-red-600'}`}>
-                          {submission.percentage}%
-                        </span>
-                      )}
+                      <p className="text-sm text-gray-500">{submission.studentId.studentNumber}</p>
                     </div>
-                  </div>
-
-                  <button
-                    onClick={() => openGradingModal(submission)}
-                    className="btn btn-secondary flex items-center gap-1"
-                  >
-                    <Eye className="w-4 h-4" />
-                    {submission.status === 'SUBMITTED' ? 'Grade' : 'View'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-500">
+                    {submission.submittedAt
+                      ? new Date(submission.submittedAt).toLocaleString()
+                      : '-'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{submission.totalScore}/{submission.maxScore}</span>
+                      <span className={`text-sm ${submission.isPassing ? 'text-green-600' : 'text-red-600'}`}>
+                        ({submission.percentage}%)
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${getStatusBadge(submission.status)}`}>
+                      {submission.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => openGradingModal(submission)}
+                      className="btn btn-secondary btn-sm flex items-center gap-1"
+                    >
+                      <Eye className="w-4 h-4" />
+                      {submission.status === 'SUBMITTED' ? 'Grade' : 'View'}
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {/* Grading Modal */}
       <Modal
         isOpen={showGradingModal}
         onClose={() => setShowGradingModal(false)}
-        title={`Grade Submission - ${selectedSubmission?.studentId.firstName} ${selectedSubmission?.studentId.lastName}`}
+        title="Grade Submission"
         size="xl"
       >
         {selectedSubmission && (
           <div className="space-y-6 max-h-[70vh] overflow-y-auto">
-            {/* Summary */}
+            {/* Student Info */}
             <div className="bg-gray-50 rounded-lg p-4">
-              <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <p className="text-sm text-gray-500">Total Score</p>
-                  <p className="text-xl font-bold">{selectedSubmission.totalScore}/{selectedSubmission.maxScore}</p>
+                  <p className="text-sm text-gray-500">Student</p>
+                  <p className="font-medium">
+                    {selectedSubmission.studentId.firstName} {selectedSubmission.studentId.lastName}
+                  </p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Percentage</p>
-                  <p className={`text-xl font-bold ${selectedSubmission.isPassing ? 'text-green-600' : 'text-red-600'}`}>
-                    {selectedSubmission.percentage}%
+                  <p className="text-sm text-gray-500">Score</p>
+                  <p className={`font-medium ${selectedSubmission.isPassing ? 'text-green-600' : 'text-red-600'}`}>
+                    {selectedSubmission.totalScore}/{selectedSubmission.maxScore} ({selectedSubmission.percentage}%)
                   </p>
                 </div>
                 <div>
@@ -420,8 +415,21 @@ const ExamSubmissionsPage = () => {
                     {selectedSubmission.status}
                   </span>
                 </div>
+                <div>
+                  <p className="text-sm text-gray-500">Result</p>
+                  <span className={`font-medium ${selectedSubmission.isPassing ? 'text-green-600' : 'text-red-600'}`}>
+                    {selectedSubmission.isPassing ? 'PASSED' : 'FAILED'}
+                  </span>
+                </div>
               </div>
             </div>
+
+            {/* Save Message */}
+            {saveMessage && (
+              <div className={`p-3 rounded-lg text-sm ${saveMessage.includes('Failed') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                {saveMessage}
+              </div>
+            )}
 
             {/* Questions */}
             {questions.map((question, index) => {
@@ -432,7 +440,7 @@ const ExamSubmissionsPage = () => {
                 <div key={question._id} className="border rounded-lg p-4">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
-                      <span className="text-sm text-gray-500">Question {index + 1} • {question.type}</span>
+                      <span className="text-sm text-gray-500">Question {index + 1} • {question.type.replace('_', ' ')}</span>
                       <p className="font-medium mt-1">{question.questionText}</p>
                     </div>
                     <span className="text-sm text-gray-500">{question.points} pts</span>
@@ -489,7 +497,7 @@ const ExamSubmissionsPage = () => {
                   )}
 
                   {/* Grading controls */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Points Earned (max {question.points})
@@ -502,22 +510,55 @@ const ExamSubmissionsPage = () => {
                         onChange={(e) =>
                           setGradingData({
                             ...gradingData,
-                            [question._id]: { ...gradeInfo, points: Math.min(Number(e.target.value), question.points) },
+                            [question._id]: { 
+                              ...gradeInfo, 
+                              points: Math.min(Number(e.target.value), question.points) 
+                            },
                           })
                         }
                         className="input"
                       />
                     </div>
                     
+                    {/* FIXED: Added feedback textarea */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <MessageSquare className="w-4 h-4 inline mr-1" />
+                        Feedback for this question
+                      </label>
+                      <textarea
+                        value={gradeInfo.feedback}
+                        onChange={(e) =>
+                          setGradingData({
+                            ...gradingData,
+                            [question._id]: { 
+                              ...gradeInfo, 
+                              feedback: e.target.value 
+                            },
+                          })
+                        }
+                        className="input"
+                        rows={2}
+                        placeholder="Enter feedback for the student..."
+                      />
+                    </div>
                   </div>
 
                   <button
                     onClick={() => handleGradeQuestion(question._id)}
                     disabled={saving}
-                    className="btn btn-secondary mt-3 text-sm"
+                    className="btn btn-secondary mt-3 text-sm flex items-center gap-2"
                   >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Grade'}
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    Save Grade & Feedback
                   </button>
+
+                  {/* Show saved feedback */}
+                  {answer?.feedback && (
+                    <div className="mt-2 p-2 bg-blue-50 rounded text-sm text-blue-700">
+                      <strong>Saved Feedback:</strong> {answer.feedback}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -554,16 +595,20 @@ const ExamSubmissionsPage = () => {
           <p className="text-gray-600">
             This will make the graded exam visible to the student. You can add overall feedback below.
           </p>
+          
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Overall Feedback (Optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Overall Feedback (optional)
+            </label>
             <textarea
               value={returnFeedback}
               onChange={(e) => setReturnFeedback(e.target.value)}
-              rows={4}
-              placeholder="Add any overall comments for the student..."
               className="input"
+              rows={4}
+              placeholder="Enter overall feedback for the student..."
             />
           </div>
+
           <div className="flex justify-end gap-3">
             <button onClick={() => setShowReturnModal(false)} className="btn btn-secondary">
               Cancel
@@ -573,7 +618,11 @@ const ExamSubmissionsPage = () => {
               disabled={returning}
               className="btn btn-primary flex items-center gap-2"
             >
-              {returning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {returning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
               Return to Student
             </button>
           </div>

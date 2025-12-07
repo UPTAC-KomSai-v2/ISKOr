@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
-import { User, Course, Exam, ExamResult, Announcement, Enrollment, Role, EnrollmentStatus, ExamStatus, ResultStatus } from '../models';
 import { authenticate } from '../middleware/auth';
+import { Role } from '../models/User';
+import { User, Course, Exam, ExamStatus, ExamSubmission, ExamResult, ResultStatus, Enrollment, EnrollmentStatus, Announcement } from '../models';
 import logger from '../utils/logger';
+import mongoose from 'mongoose';
 
 const router = Router();
 
@@ -11,35 +13,32 @@ const router = Router();
  */
 router.get('/stats', authenticate, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
-    const role = req.user!.role;
-
+    const { id: userId, role } = req.user!;
     let stats: any = {};
 
     if (role === Role.ADMIN) {
-      const [totalUsers, totalStudents, totalFaculty, totalCourses, totalExams, activeExams] = await Promise.all([
+      const [totalUsers, totalCourses, totalExams, activeExams] = await Promise.all([
         User.countDocuments({ isActive: true }),
-        User.countDocuments({ role: Role.STUDENT, isActive: true }),
-        User.countDocuments({ role: Role.FACULTY, isActive: true }),
-        Course.countDocuments({ isActive: true }),
+        Course.countDocuments(),
         Exam.countDocuments(),
-        Exam.countDocuments({ status: { $in: [ExamStatus.SCHEDULED, ExamStatus.ONGOING] } }),
+        Exam.countDocuments({ status: ExamStatus.ACTIVE }),
       ]);
 
       stats = {
         totalUsers,
-        totalStudents,
-        totalFaculty,
         totalCourses,
         totalExams,
         activeExams,
       };
     } else if (role === Role.FACULTY) {
       const [myCourses, myExams, pendingResults, totalStudents] = await Promise.all([
-        Course.countDocuments({ facultyId: userId, isActive: true }),
+        Course.countDocuments({ facultyId: userId }),
         Exam.countDocuments({ createdById: userId }),
-        ExamResult.countDocuments({ status: ResultStatus.PENDING }),
-        Enrollment.countDocuments({ 
+        ExamSubmission.countDocuments({
+          examId: { $in: (await Exam.find({ createdById: userId }).select('_id')).map(e => e._id) },
+          status: 'SUBMITTED',
+        }),
+        Enrollment.countDocuments({
           courseId: { $in: (await Course.find({ facultyId: userId }).select('_id')).map(c => c._id) },
           status: EnrollmentStatus.ENROLLED,
         }),
@@ -52,28 +51,49 @@ router.get('/stats', authenticate, async (req: Request, res: Response): Promise<
         totalStudents,
       };
     } else if (role === Role.STUDENT) {
-      const enrollments = await Enrollment.find({ studentId: userId, status: EnrollmentStatus.ENROLLED }).select('courseId');
+      // Get enrolled courses for student
+      const enrollments = await Enrollment.find({ 
+        studentId: new mongoose.Types.ObjectId(userId), 
+        status: EnrollmentStatus.ENROLLED 
+      }).select('courseId');
+      
       const courseIds = enrollments.map(e => e.courseId);
+      const enrolledCourses = enrollments.length;
 
-      const [enrolledCourses, upcomingExams, myResults, averageScore] = await Promise.all([
-        enrollments.length,
-        Exam.countDocuments({
-          courseId: { $in: courseIds },
-          status: ExamStatus.SCHEDULED,
-          'schedules.startTime': { $gte: new Date() },
-        }),
-        ExamResult.countDocuments({ studentId: userId, status: ResultStatus.PUBLISHED }),
-        ExamResult.aggregate([
-          { $match: { studentId: userId, status: ResultStatus.PUBLISHED } },
-          { $group: { _id: null, avgScore: { $avg: '$score' } } },
-        ]),
+      // Count upcoming exams - FIXED: properly count active exams for enrolled courses
+      const now = new Date();
+      const upcomingExams = await Exam.countDocuments({
+        courseId: { $in: courseIds },
+        status: ExamStatus.ACTIVE,
+        $or: [
+          { endDate: { $gte: now } },
+          { endDate: null },
+          { endDate: { $exists: false } },
+        ],
+      });
+
+      // Count completed submissions (results)
+      const myResults = await ExamSubmission.countDocuments({ 
+        studentId: new mongoose.Types.ObjectId(userId), 
+        status: { $in: ['GRADED', 'RETURNED'] }
+      });
+
+      // Calculate average score from submissions
+      const avgScoreResult = await ExamSubmission.aggregate([
+        { 
+          $match: { 
+            studentId: new mongoose.Types.ObjectId(userId), 
+            status: { $in: ['GRADED', 'RETURNED'] }
+          } 
+        },
+        { $group: { _id: null, avgScore: { $avg: '$percentage' } } },
       ]);
 
       stats = {
         enrolledCourses,
         upcomingExams,
         myResults,
-        averageScore: averageScore[0]?.avgScore?.toFixed(2) || 0,
+        averageScore: avgScoreResult[0]?.avgScore?.toFixed(1) || '0',
       };
     }
 
@@ -91,50 +111,66 @@ router.get('/stats', authenticate, async (req: Request, res: Response): Promise<
 router.get('/recent-activity', authenticate, async (req: Request, res: Response): Promise<void> => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
-    const userId = req.user!.id;
-    const role = req.user!.role;
+    const { id: userId, role } = req.user!;
 
-    let filter: any = {};
+    let activities: any[] = [];
 
-    if (role === Role.STUDENT) {
-      const enrollments = await Enrollment.find({ studentId: userId, status: EnrollmentStatus.ENROLLED }).select('courseId');
-      filter.courseId = { $in: enrollments.map(e => e.courseId) };
+    if (role === Role.ADMIN) {
+      // Get recent submissions across all exams
+      const recentSubmissions = await ExamSubmission.find({
+        status: { $ne: 'IN_PROGRESS' },
+      })
+        .populate('studentId', 'firstName lastName')
+        .populate({
+          path: 'examId',
+          select: 'title',
+        })
+        .sort({ submittedAt: -1 })
+        .limit(limit);
+
+      activities = recentSubmissions.map((s) => ({
+        type: 'submission',
+        message: `${(s.studentId as any)?.firstName} ${(s.studentId as any)?.lastName} submitted ${(s.examId as any)?.title}`,
+        timestamp: s.submittedAt,
+      }));
     } else if (role === Role.FACULTY) {
-      filter.createdById = userId;
+      // Get recent submissions for faculty's exams
+      const myExams = await Exam.find({ createdById: userId }).select('_id');
+      const examIds = myExams.map((e) => e._id);
+
+      const recentSubmissions = await ExamSubmission.find({
+        examId: { $in: examIds },
+        status: { $ne: 'IN_PROGRESS' },
+      })
+        .populate('studentId', 'firstName lastName')
+        .populate('examId', 'title')
+        .sort({ submittedAt: -1 })
+        .limit(limit);
+
+      activities = recentSubmissions.map((s) => ({
+        type: 'submission',
+        message: `${(s.studentId as any)?.firstName} ${(s.studentId as any)?.lastName} submitted ${(s.examId as any)?.title}`,
+        timestamp: s.submittedAt,
+      }));
+    } else {
+      // Student - get their recent submissions
+      const recentSubmissions = await ExamSubmission.find({
+        studentId: new mongoose.Types.ObjectId(userId),
+        status: { $ne: 'IN_PROGRESS' },
+      })
+        .populate('examId', 'title')
+        .sort({ submittedAt: -1 })
+        .limit(limit);
+
+      activities = recentSubmissions.map((s) => ({
+        type: 'submission',
+        message: `You submitted ${(s.examId as any)?.title}`,
+        timestamp: s.submittedAt,
+        score: s.percentage,
+      }));
     }
 
-    const [recentExams, recentAnnouncements] = await Promise.all([
-      Exam.find(filter)
-        .populate('courseId', 'code name')
-        .sort({ updatedAt: -1 })
-        .limit(limit / 2),
-      Announcement.find({ isPublished: true })
-        .populate('courseId', 'code')
-        .sort({ publishedAt: -1 })
-        .limit(limit / 2),
-    ]);
-
-    // Combine and sort by date
-    const activity = [
-      ...recentExams.map(e => ({
-        type: 'exam',
-        id: e._id,
-        title: e.title,
-        course: (e.courseId as any)?.code,
-        status: e.status,
-        date: e.updatedAt,
-      })),
-      ...recentAnnouncements.map(a => ({
-        type: 'announcement',
-        id: a._id,
-        title: a.title,
-        course: (a.courseId as any)?.code,
-        priority: a.priority,
-        date: a.publishedAt,
-      })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit);
-
-    res.json({ success: true, data: { activity } });
+    res.json({ success: true, data: { activities } });
   } catch (error) {
     logger.error('Get recent activity error:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch activity' } });

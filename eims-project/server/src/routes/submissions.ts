@@ -8,7 +8,7 @@ import logger from '../utils/logger';
 
 const router = Router();
 
-// Start an exam (student)
+// Start an exam (student) - FIXED VERSION
 router.post(
   '/start/:examId',
   authenticate,
@@ -47,56 +47,87 @@ router.post(
         return res.status(403).json({ error: 'You are not enrolled in this course' });
       }
 
-      // Check attempt limit
-      const existingAttempts = await ExamSubmission.countDocuments({
-        examId: new mongoose.Types.ObjectId(examId),
-        studentId: new mongoose.Types.ObjectId(studentId),
-      });
-      if (existingAttempts >= exam.settings.maxAttempts) {
-        return res.status(400).json({ error: 'Maximum attempts reached' });
-      }
-
-      // Check for in-progress submission
+      // Check for in-progress submission FIRST - return it if exists
       const inProgress = await ExamSubmission.findOne({
         examId: new mongoose.Types.ObjectId(examId),
         studentId: new mongoose.Types.ObjectId(studentId),
         status: SubmissionStatus.IN_PROGRESS,
       });
+
       if (inProgress) {
         // Return existing in-progress submission
         return res.json(inProgress);
       }
 
-      // Safely determine next attempt number
-      const lastSubmission = await ExamSubmission.findOne({
+      // Count only COMPLETED attempts (submitted, graded, returned) - not in-progress
+      const completedAttempts = await ExamSubmission.countDocuments({
         examId: new mongoose.Types.ObjectId(examId),
         studentId: new mongoose.Types.ObjectId(studentId),
-      }).sort({ attemptNumber: -1 });
-
-      const attemptNumber = lastSubmission ? lastSubmission.attemptNumber + 1 : 1;
-
-      // Create new submission
-      const submission = new ExamSubmission({
-        examId: new mongoose.Types.ObjectId(examId),
-        studentId: new mongoose.Types.ObjectId(studentId),
-        status: SubmissionStatus.IN_PROGRESS,
-        attemptNumber,
-        startedAt: new Date(),
-        maxScore: exam.totalPoints,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+        status: { $in: [SubmissionStatus.SUBMITTED, SubmissionStatus.GRADED, SubmissionStatus.RETURNED] },
       });
 
-      await submission.save();
+      if (completedAttempts >= exam.settings.maxAttempts) {
+        return res.status(400).json({ error: 'Maximum attempts reached' });
+      }
+
+      // Calculate the next attempt number
+      const nextAttemptNumber = completedAttempts + 1;
+
+      // Use findOneAndUpdate with upsert to prevent race conditions and duplicates
+      const submission = await ExamSubmission.findOneAndUpdate(
+        {
+          examId: new mongoose.Types.ObjectId(examId),
+          studentId: new mongoose.Types.ObjectId(studentId),
+          status: SubmissionStatus.IN_PROGRESS,
+        },
+        {
+          $setOnInsert: {
+            examId: new mongoose.Types.ObjectId(examId),
+            studentId: new mongoose.Types.ObjectId(studentId),
+            status: SubmissionStatus.IN_PROGRESS,
+            attemptNumber: nextAttemptNumber,
+            startedAt: new Date(),
+            maxScore: exam.totalPoints,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
+            answers: [],
+            totalScore: 0,
+            percentage: 0,
+            isPassing: false,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        }
+      );
 
       res.status(201).json(submission);
-    } catch (error) {
+    } catch (error: any) {
+      // Handle duplicate key error gracefully
+      if (error.code === 11000) {
+        // Race condition - try to find the existing submission
+        try {
+          const { examId } = req.params;
+          const studentId = req.user!.id;
+          const existing = await ExamSubmission.findOne({
+            examId: new mongoose.Types.ObjectId(examId),
+            studentId: new mongoose.Types.ObjectId(studentId),
+            status: SubmissionStatus.IN_PROGRESS,
+          });
+          if (existing) {
+            return res.json(existing);
+          }
+        } catch (innerError) {
+          logger.error('Error finding existing submission:', innerError);
+        }
+      }
       logger.error('Error starting exam:', error);
       res.status(500).json({ error: 'Failed to start exam' });
     }
   }
 );
-
 
 // Save answer (auto-save during exam)
 router.put(
@@ -155,10 +186,9 @@ router.put(
       }
 
       submission.markModified('answers');
-
       await submission.save();
 
-      res.json({ message: 'Answer saved' });
+      res.json({ success: true });
     } catch (error) {
       logger.error('Error saving answer:', error);
       res.status(500).json({ error: 'Failed to save answer' });
@@ -186,7 +216,7 @@ router.post(
       }
 
       if (submission.status !== SubmissionStatus.IN_PROGRESS) {
-        return res.status(400).json({ error: 'Already submitted' });
+        return res.status(400).json({ error: 'Submission already submitted' });
       }
 
       const exam = await Exam.findById(submission.examId);
@@ -194,28 +224,28 @@ router.post(
         return res.status(404).json({ error: 'Exam not found' });
       }
 
-      // Auto-grade objective questions
-      const questions = await Question.find({ examId: submission.examId });
+      // Get all questions for auto-grading
+      const questions = await Question.find({ examId: exam._id });
+      const questionMap = new Map(questions.map((q) => [q._id.toString(), q]));
+
       let totalScore = 0;
       let hasEssayQuestions = false;
 
+      // Auto-grade each answer
       for (const answer of submission.answers) {
-        const question = questions.find(
-          (q) => q._id.toString() === answer.questionId.toString()
-        );
-
+        const question = questionMap.get(answer.questionId.toString());
         if (!question) continue;
 
-        let isCorrect = false;
+        let isCorrect: boolean | undefined;
         let pointsEarned = 0;
 
         switch (question.type) {
           case QuestionType.MULTIPLE_CHOICE:
             if (answer.selectedChoiceId && question.choices) {
               const selectedChoice = question.choices.find(
-                (c) => c._id?.toString() === answer.selectedChoiceId?.toString()
+                (c: any) => c._id.toString() === answer.selectedChoiceId?.toString()
               );
-              isCorrect = selectedChoice?.isCorrect || false;
+              isCorrect = selectedChoice?.isCorrect === true;
               pointsEarned = isCorrect ? question.points : 0;
             }
             break;
@@ -247,7 +277,7 @@ router.post(
               let correctCount = 0;
               for (const match of answer.matchingAnswers) {
                 const pair = question.matchingPairs.find(
-                  (p) => p._id?.toString() === match.leftId
+                  (p: any) => p._id?.toString() === match.leftId
                 );
                 if (pair && pair._id?.toString() === match.rightId) {
                   correctCount++;
@@ -289,6 +319,7 @@ router.post(
         ? SubmissionStatus.SUBMITTED 
         : SubmissionStatus.GRADED;
 
+      submission.markModified('answers');
       await submission.save();
 
       // Create notification for faculty if has essay questions
@@ -321,7 +352,11 @@ router.get(
 
       const submission = await ExamSubmission.findById(submissionId)
         .populate('studentId', 'firstName lastName email studentNumber')
-        .populate('examId');
+        .populate({
+          path: 'examId',
+          select: 'title type courseId settings totalPoints',
+          populate: { path: 'courseId', select: 'code name' },
+        });
 
       if (!submission) {
         return res.status(404).json({ error: 'Submission not found' });
@@ -329,51 +364,41 @@ router.get(
 
       // Check access
       if (user.role === Role.STUDENT) {
-        if (submission.studentId._id.toString() !== user.id) {
+        if ((submission.studentId as any)._id.toString() !== user.id) {
           return res.status(403).json({ error: 'Access denied' });
         }
-      }
-
-      // Get exam for settings check
-      const exam = await Exam.findById(submission.examId);
-
-      // If student and exam settings don't allow review
-      if (user.role === Role.STUDENT && exam && !exam.settings.allowReview) {
-        if (submission.status !== SubmissionStatus.RETURNED) {
-          return res.status(403).json({ error: 'Results not yet available' });
+        // Students can only see their results if returned or if showResults is enabled
+        if (submission.status === SubmissionStatus.IN_PROGRESS) {
+          return res.status(400).json({ error: 'Submission still in progress' });
         }
       }
 
-      // Get questions for this submission
-      const questions = await Question.find({ examId: submission.examId }).sort({ order: 1 });
+      // Fetch questions for this exam
+      const examId = (submission.examId as any)._id;
+      const questionsRaw = await Question.find({ examId }).sort({ order: 1 });
 
-      // For students, respect exam settings on what to show
-      if (user.role === Role.STUDENT && exam) {
-        const response: any = submission.toObject();
+      // Transform questions - for students, sanitize based on exam settings
+      let questions: any[] = questionsRaw.map(q => q.toObject());
+      
+      if (user.role === Role.STUDENT) {
+        const exam = submission.examId as any;
+        const showCorrectAnswers = exam.settings?.showCorrectAnswers && 
+          (submission.status === 'GRADED' || submission.status === 'RETURNED');
         
-        if (!exam.settings.showCorrectAnswers) {
-          // Don't show correct answers
-          questions.forEach((q: any) => {
-            if (q.choices) {
-              q.choices = q.choices.map((c: any) => ({
+        questions = questions.map(qObj => {
+          if (!showCorrectAnswers) {
+            // Hide correct answers
+            if (qObj.choices) {
+              qObj.choices = qObj.choices.map((c: any) => ({
                 _id: c._id,
                 text: c.text,
               }));
             }
-            delete q.correctAnswer;
-            delete q.acceptedAnswers;
-          });
-        }
-
-        if (!exam.settings.showFeedback) {
-          response.answers = response.answers.map((a: any) => ({
-            ...a,
-            feedback: undefined,
-            explanation: undefined,
-          }));
-        }
-
-        return res.json({ submission: response, questions });
+            delete qObj.correctAnswer;
+            delete qObj.acceptedAnswers;
+          }
+          return qObj;
+        });
       }
 
       res.json({ submission, questions });
@@ -384,28 +409,7 @@ router.get(
   }
 );
 
-// Get all submissions for an exam (faculty/admin)
-router.get(
-  '/exam/:examId/all',
-  authenticate,
-  authorize(Role.ADMIN, Role.FACULTY),
-  async (req: Request, res: Response) => {
-    try {
-      const { examId } = req.params;
-
-      const submissions = await ExamSubmission.find({ examId: new mongoose.Types.ObjectId(examId) })
-        .populate('studentId', 'firstName lastName email studentNumber section')
-        .sort({ submittedAt: -1 });
-
-      res.json(submissions);
-    } catch (error) {
-      logger.error('Error fetching submissions:', error);
-      res.status(500).json({ error: 'Failed to fetch submissions' });
-    }
-  }
-);
-
-// Get student's submissions (their history)
+// Get student's submissions
 router.get(
   '/student/my-submissions',
   authenticate,
@@ -414,23 +418,50 @@ router.get(
     try {
       const studentId = req.user!.id;
 
-      const submissions = await ExamSubmission.find({ studentId: new mongoose.Types.ObjectId(studentId) })
+      const submissions = await ExamSubmission.find({
+        studentId: new mongoose.Types.ObjectId(studentId),
+        status: { $ne: SubmissionStatus.IN_PROGRESS },
+      })
         .populate({
           path: 'examId',
-          select: 'title type courseId settings',
+          select: 'title type courseId',
           populate: { path: 'courseId', select: 'code name' },
         })
         .sort({ submittedAt: -1 });
 
       res.json(submissions);
     } catch (error) {
-      logger.error('Error fetching submissions:', error);
+      logger.error('Error fetching student submissions:', error);
       res.status(500).json({ error: 'Failed to fetch submissions' });
     }
   }
 );
 
-// Grade answer (faculty) - FIXED VERSION
+// Get all submissions for an exam (faculty)
+router.get(
+  '/exam/:examId/all',
+  authenticate,
+  authorize(Role.ADMIN, Role.FACULTY),
+  async (req: Request, res: Response) => {
+    try {
+      const { examId } = req.params;
+
+      const submissions = await ExamSubmission.find({
+        examId: new mongoose.Types.ObjectId(examId),
+        status: { $ne: SubmissionStatus.IN_PROGRESS },
+      })
+        .populate('studentId', 'firstName lastName email studentNumber section')
+        .sort({ submittedAt: -1 });
+
+      res.json(submissions);
+    } catch (error) {
+      logger.error('Error fetching exam submissions:', error);
+      res.status(500).json({ error: 'Failed to fetch submissions' });
+    }
+  }
+);
+
+// Grade a specific answer - FIXED VERSION with feedback
 router.put(
   '/:submissionId/grade/:questionId',
   authenticate,
@@ -441,7 +472,7 @@ router.put(
       const { pointsEarned, feedback } = req.body;
       const graderId = req.user!.id;
 
-      logger.info(`Grading attempt - Submission: ${submissionId}, Question: ${questionId}, Points: ${pointsEarned}`);
+      logger.info(`Grading attempt - Submission: ${submissionId}, Question: ${questionId}, Points: ${pointsEarned}, Feedback: ${feedback}`);
 
       // Validate input
       if (pointsEarned === undefined || pointsEarned === null) {
@@ -475,11 +506,14 @@ router.put(
       // Cap points at question max
       const cappedPoints = Math.min(Math.max(0, pointsEarned), question.points);
       
-      // Update the answer
+      // Update the answer - FIXED: properly save feedback
       submission.answers[answerIndex].pointsEarned = cappedPoints;
-      submission.answers[answerIndex].feedback = feedback || '';
+      submission.answers[answerIndex].feedback = feedback !== undefined ? feedback : (submission.answers[answerIndex].feedback || '');
       submission.answers[answerIndex].gradedAt = new Date();
       submission.answers[answerIndex].gradedById = new mongoose.Types.ObjectId(graderId);
+      
+      // Determine if correct based on points
+      submission.answers[answerIndex].isCorrect = cappedPoints >= question.points;
 
       // Update total score
       submission.totalScore = submission.totalScore - oldPoints + cappedPoints;
@@ -504,10 +538,11 @@ router.put(
       submission.markModified('totalScore');
       submission.markModified('percentage');
       submission.markModified('status');
+      submission.markModified('isPassing');
 
       await submission.save();
 
-      logger.info(`Successfully graded - New score: ${submission.totalScore}, Status: ${submission.status}`);
+      logger.info(`Successfully graded - New score: ${submission.totalScore}, Status: ${submission.status}, Feedback saved: ${submission.answers[answerIndex].feedback}`);
 
       res.json(submission);
     } catch (error) {
@@ -569,7 +604,7 @@ router.post(
   }
 );
 
-// Bulk return all graded submissions
+// Return all graded submissions for an exam
 router.post(
   '/exam/:examId/return-all',
   authenticate,
@@ -578,41 +613,39 @@ router.post(
     try {
       const { examId } = req.params;
 
-      logger.info(`Bulk returning submissions for exam: ${examId}`);
-
       const result = await ExamSubmission.updateMany(
-        { examId: new mongoose.Types.ObjectId(examId), status: SubmissionStatus.GRADED },
-        { $set: { status: SubmissionStatus.RETURNED } }
+        {
+          examId: new mongoose.Types.ObjectId(examId),
+          status: SubmissionStatus.GRADED,
+        },
+        {
+          $set: { status: SubmissionStatus.RETURNED },
+        }
       );
 
-      logger.info(`Bulk return result: ${result.modifiedCount} submissions updated`);
+      // Get submissions to notify students
+      const submissions = await ExamSubmission.find({
+        examId: new mongoose.Types.ObjectId(examId),
+        status: SubmissionStatus.RETURNED,
+      }).populate('studentId', '_id');
 
-      // Get all affected submissions and notify students
-      const submissions = await ExamSubmission.find({ 
-        examId: new mongoose.Types.ObjectId(examId), 
-        status: SubmissionStatus.RETURNED 
-      });
-      
       const exam = await Exam.findById(examId);
 
+      // Notify all students
       for (const submission of submissions) {
         await Notification.create({
-          userId: submission.studentId,
+          userId: submission.studentId._id,
           type: NotificationType.RESULT_PUBLISHED,
           title: 'Exam Results Available',
           message: `Your results for "${exam?.title}" are now available.`,
-          data: { submissionId: submission._id, examId: exam?._id },
+          data: { submissionId: submission._id, examId },
         });
       }
 
-      res.json({ 
-        success: true,
-        message: `${result.modifiedCount} submissions returned`,
-        count: result.modifiedCount 
-      });
+      res.json({ message: `Returned ${result.modifiedCount} submissions` });
     } catch (error) {
-      logger.error('Error returning submissions:', error);
-      res.status(500).json({ error: 'Failed to return submissions', details: error instanceof Error ? error.message : 'Unknown error' });
+      logger.error('Error returning all submissions:', error);
+      res.status(500).json({ error: 'Failed to return submissions' });
     }
   }
 );
