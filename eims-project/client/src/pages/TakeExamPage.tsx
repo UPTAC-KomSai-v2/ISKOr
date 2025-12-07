@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Clock, AlertCircle, ChevronLeft, ChevronRight, Send, Loader2, CheckCircle } from 'lucide-react';
 import api from '@/services/api';
+import Modal from '@/components/Modal';
 
 interface Choice {
   _id: string;
@@ -31,6 +32,7 @@ interface Exam {
   settings: {
     timeLimitMinutes?: number;
     shuffleQuestions: boolean;
+    shuffleChoices: boolean;
   };
   courseId: { code: string; name: string };
 }
@@ -47,8 +49,19 @@ const TakeExamPage = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showInstructions, setShowInstructions] = useState(true);
+
+  // Shuffle array helper
+  const shuffleArray = <T,>(array: T[]): T[] => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  };
 
   // Start exam and fetch questions
   useEffect(() => {
@@ -75,9 +88,17 @@ const TakeExamPage = () => {
         const questionsRes = await api.get(`/questions/exam/${examId}`);
         let qs = questionsRes.data;
 
-        // Shuffle if needed
+        // Shuffle questions if needed
         if (examRes.data.settings.shuffleQuestions) {
-          qs = qs.sort(() => Math.random() - 0.5);
+          qs = shuffleArray(qs);
+        }
+
+        // Shuffle choices if needed
+        if (examRes.data.settings.shuffleChoices) {
+          qs = qs.map((q: Question) => ({
+            ...q,
+            choices: q.choices ? shuffleArray(q.choices) : q.choices,
+          }));
         }
 
         setQuestions(qs);
@@ -113,7 +134,8 @@ const TakeExamPage = () => {
       setTimeRemaining((prev) => {
         if (prev === null || prev <= 1) {
           clearInterval(timer);
-          handleSubmit(); // Auto-submit when time runs out
+          // Auto-submit when time runs out
+          handleSubmit();
           return 0;
         }
         return prev - 1;
@@ -142,6 +164,8 @@ const TakeExamPage = () => {
   const handleSubmit = async () => {
     if (!submissionId) return;
     setSubmitting(true);
+    setShowConfirmModal(false);
+    
     try {
       await api.post(`/submissions/${submissionId}/submit`);
       navigate(`/submissions/${submissionId}`);
@@ -159,7 +183,10 @@ const TakeExamPage = () => {
 
   const currentQuestion = questions[currentIndex];
   const answeredCount = Object.keys(answers).filter(
-    (qId) => answers[qId].selectedChoiceId || answers[qId].booleanAnswer !== undefined || answers[qId].textAnswer
+    (qId) => 
+      answers[qId].selectedChoiceId || 
+      answers[qId].booleanAnswer !== undefined || 
+      answers[qId].textAnswer
   ).length;
 
   if (loading) {
@@ -183,6 +210,45 @@ const TakeExamPage = () => {
     );
   }
 
+  // Show instructions first
+  if (showInstructions && exam?.instructions) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="card p-8">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">{exam.title}</h1>
+          <p className="text-gray-500 mb-6">{exam.courseId.code}</p>
+
+          <div className="bg-gray-50 rounded-lg p-6 mb-6">
+            <h2 className="font-semibold text-gray-900 mb-3">Instructions</h2>
+            <p className="text-gray-700 whitespace-pre-wrap">{exam.instructions}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+            <div className="bg-primary-50 rounded-lg p-4">
+              <p className="text-primary-600 font-medium">Questions</p>
+              <p className="text-2xl font-bold text-primary-700">{questions.length}</p>
+            </div>
+            {exam.settings.timeLimitMinutes && (
+              <div className="bg-orange-50 rounded-lg p-4">
+                <p className="text-orange-600 font-medium">Time Limit</p>
+                <p className="text-2xl font-bold text-orange-700">{exam.settings.timeLimitMinutes} min</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowInstructions(false)}
+              className="btn btn-primary"
+            >
+              Start Exam
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto">
       {/* Header */}
@@ -194,11 +260,15 @@ const TakeExamPage = () => {
           </div>
           <div className="flex items-center gap-4">
             {timeRemaining !== null && (
-              <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
-                timeRemaining < 300 ? 'bg-red-100 text-red-700' : 'bg-gray-100'
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full font-medium ${
+                timeRemaining < 300 
+                  ? 'bg-red-100 text-red-700 animate-pulse' 
+                  : timeRemaining < 600
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-gray-100 text-gray-700'
               }`}>
                 <Clock className="w-4 h-4" />
-                <span className="font-mono font-medium">{formatTime(timeRemaining)}</span>
+                <span className="font-mono">{formatTime(timeRemaining)}</span>
               </div>
             )}
             <div className="text-sm text-gray-500">
@@ -209,33 +279,46 @@ const TakeExamPage = () => {
 
         {/* Question navigation */}
         <div className="flex flex-wrap gap-2 mt-4">
-          {questions.map((q, i) => (
-            <button
-              key={q._id}
-              onClick={() => setCurrentIndex(i)}
-              className={`w-8 h-8 rounded text-sm font-medium ${
-                i === currentIndex
-                  ? 'bg-primary-600 text-white'
-                  : answers[q._id]?.selectedChoiceId || answers[q._id]?.booleanAnswer !== undefined || answers[q._id]?.textAnswer
-                  ? 'bg-green-100 text-green-700'
-                  : 'bg-gray-100 text-gray-600'
-              }`}
-            >
-              {i + 1}
-            </button>
-          ))}
+          {questions.map((q, i) => {
+            const hasAnswer = answers[q._id]?.selectedChoiceId || 
+                              answers[q._id]?.booleanAnswer !== undefined || 
+                              answers[q._id]?.textAnswer;
+            return (
+              <button
+                key={q._id}
+                onClick={() => setCurrentIndex(i)}
+                className={`w-8 h-8 rounded text-sm font-medium transition-colors ${
+                  i === currentIndex
+                    ? 'bg-primary-600 text-white'
+                    : hasAnswer
+                    ? 'bg-green-100 text-green-700 border border-green-300'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {i + 1}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Question */}
       {currentQuestion && (
-        <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+        <div className="card p-6 mb-6">
           <div className="flex items-start justify-between mb-4">
-            <span className="text-sm text-gray-500">Question {currentIndex + 1} of {questions.length}</span>
-            <span className="text-sm font-medium">{currentQuestion.points} point{currentQuestion.points !== 1 ? 's' : ''}</span>
+            <div>
+              <span className="text-sm text-gray-500">
+                Question {currentIndex + 1} of {questions.length}
+              </span>
+              <span className="mx-2 text-gray-300">•</span>
+              <span className="text-sm text-primary-600 font-medium">
+                {currentQuestion.points} point{currentQuestion.points !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <span className="badge badge-gray">{currentQuestion.type.replace('_', ' ')}</span>
           </div>
 
-          <p className="text-lg font-medium mb-6">{currentQuestion.questionText}</p>
+          <p className="text-lg font-medium text-gray-900 mb-6">{currentQuestion.questionText}</p>
 
           {/* Multiple Choice */}
           {currentQuestion.type === 'MULTIPLE_CHOICE' && currentQuestion.choices && (
@@ -243,10 +326,10 @@ const TakeExamPage = () => {
               {currentQuestion.choices.map((choice) => (
                 <label
                   key={choice._id}
-                  className={`flex items-center gap-3 p-4 rounded-lg border cursor-pointer transition-colors ${
+                  className={`flex items-center p-4 rounded-lg border-2 cursor-pointer transition-all ${
                     answers[currentQuestion._id]?.selectedChoiceId === choice._id
                       ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:bg-gray-50'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                   }`}
                 >
                   <input
@@ -254,9 +337,18 @@ const TakeExamPage = () => {
                     name={`question-${currentQuestion._id}`}
                     checked={answers[currentQuestion._id]?.selectedChoiceId === choice._id}
                     onChange={() => updateAnswer(currentQuestion._id, { selectedChoiceId: choice._id })}
-                    className="w-4 h-4 text-primary-600"
+                    className="sr-only"
                   />
-                  <span>{choice.text}</span>
+                  <div className={`w-5 h-5 rounded-full border-2 mr-3 flex items-center justify-center ${
+                    answers[currentQuestion._id]?.selectedChoiceId === choice._id
+                      ? 'border-primary-500 bg-primary-500'
+                      : 'border-gray-300'
+                  }`}>
+                    {answers[currentQuestion._id]?.selectedChoiceId === choice._id && (
+                      <div className="w-2 h-2 rounded-full bg-white" />
+                    )}
+                  </div>
+                  <span className="text-gray-700">{choice.text}</span>
                 </label>
               ))}
             </div>
@@ -268,10 +360,10 @@ const TakeExamPage = () => {
               {[true, false].map((value) => (
                 <label
                   key={String(value)}
-                  className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-lg border cursor-pointer transition-colors ${
+                  className={`flex-1 p-4 rounded-lg border-2 cursor-pointer text-center transition-all ${
                     answers[currentQuestion._id]?.booleanAnswer === value
                       ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:bg-gray-50'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                   }`}
                 >
                   <input
@@ -279,22 +371,22 @@ const TakeExamPage = () => {
                     name={`question-${currentQuestion._id}`}
                     checked={answers[currentQuestion._id]?.booleanAnswer === value}
                     onChange={() => updateAnswer(currentQuestion._id, { booleanAnswer: value })}
-                    className="w-4 h-4 text-primary-600"
+                    className="sr-only"
                   />
-                  <span className="font-medium">{value ? 'True' : 'False'}</span>
+                  <span className="text-lg font-medium">{value ? 'True' : 'False'}</span>
                 </label>
               ))}
             </div>
           )}
 
-          {/* Short Answer / Fill in Blank */}
+          {/* Short Answer / Fill in the Blank */}
           {(currentQuestion.type === 'SHORT_ANSWER' || currentQuestion.type === 'FILL_IN_BLANK') && (
             <input
               type="text"
               value={answers[currentQuestion._id]?.textAnswer || ''}
               onChange={(e) => updateAnswer(currentQuestion._id, { textAnswer: e.target.value })}
-              className="input w-full"
-              placeholder="Type your answer..."
+              placeholder="Type your answer here..."
+              className="input text-lg"
             />
           )}
 
@@ -304,14 +396,13 @@ const TakeExamPage = () => {
               <textarea
                 value={answers[currentQuestion._id]?.textAnswer || ''}
                 onChange={(e) => updateAnswer(currentQuestion._id, { textAnswer: e.target.value })}
+                placeholder="Type your answer here..."
                 rows={8}
-                className="input w-full"
-                placeholder="Write your answer..."
+                className="input text-lg"
               />
               {currentQuestion.maxWords && (
                 <p className="text-sm text-gray-500 mt-2">
-                  Word count: {(answers[currentQuestion._id]?.textAnswer || '').split(/\s+/).filter(Boolean).length}
-                  {currentQuestion.maxWords && ` / ${currentQuestion.maxWords} max`}
+                  Word limit: {currentQuestion.maxWords} words
                 </p>
               )}
             </div>
@@ -322,65 +413,85 @@ const TakeExamPage = () => {
       {/* Navigation */}
       <div className="flex items-center justify-between">
         <button
-          onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
+          onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))}
           disabled={currentIndex === 0}
-          className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+          className="btn btn-secondary flex items-center gap-2"
         >
-          <ChevronLeft className="w-5 h-5" />
+          <ChevronLeft className="w-4 h-4" />
           Previous
         </button>
 
-        {currentIndex === questions.length - 1 ? (
-          <button
-            onClick={() => setShowConfirm(true)}
-            className="flex items-center gap-2 px-6 py-2 bg-primary-600 text-white hover:bg-primary-700 rounded-lg"
-          >
-            <Send className="w-5 h-5" />
-            Submit Exam
-          </button>
-        ) : (
-          <button
-            onClick={() => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))}
-            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
-            Next
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {currentIndex < questions.length - 1 ? (
+            <button
+              onClick={() => setCurrentIndex(currentIndex + 1)}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              Next
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowConfirmModal(true)}
+              disabled={submitting}
+              className="btn btn-success flex items-center gap-2"
+            >
+              {submitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              Submit Exam
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Confirm Submit Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold mb-4">Submit Exam?</h3>
-            <p className="text-gray-600 mb-4">
-              You have answered {answeredCount} out of {questions.length} questions.
-              {answeredCount < questions.length && (
-                <span className="text-yellow-600 block mt-2">
-                  Warning: {questions.length - answeredCount} questions are unanswered.
-                </span>
-              )}
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
-              >
-                Review Answers
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                Submit
-              </button>
+      <Modal
+        isOpen={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        title="Submit Exam"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            Are you sure you want to submit your exam?
+          </p>
+          
+          <div className="bg-gray-50 rounded-lg p-4">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Answered Questions:</span>
+              <span className="font-medium">{answeredCount} of {questions.length}</span>
             </div>
+            {answeredCount < questions.length && (
+              <p className="text-orange-600 text-sm mt-2">
+                ⚠️ You have {questions.length - answeredCount} unanswered question(s)
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={() => setShowConfirmModal(false)}
+              className="btn btn-secondary"
+            >
+              Review Answers
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              {submitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle className="w-4 h-4" />
+              )}
+              Confirm Submit
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 };

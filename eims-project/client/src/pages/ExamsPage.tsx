@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { examsApi, coursesApi } from '@/services/api';
+import api from '@/services/api';
 import { Exam, ExamStatus, ExamType, Course, Role } from '@/types';
 import Modal from '@/components/Modal';
-import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin, Eye, Play, Pause, Users, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const ExamsPage = () => {
@@ -18,7 +19,6 @@ const ExamsPage = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
 
@@ -32,16 +32,9 @@ const ExamsPage = () => {
     passingScore: 60,
     guidelines: '',
   });
-  const [scheduleData, setScheduleData] = useState({
-    section: '',
-    room: '',
-    meetingLink: '',
-    startTime: '',
-    endTime: '',
-    instructions: '',
-  });
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchExams = async () => {
     try {
@@ -82,17 +75,6 @@ const ExamsPage = () => {
     setFormError('');
   };
 
-  const resetScheduleForm = () => {
-    setScheduleData({
-      section: '',
-      room: '',
-      meetingLink: '',
-      startTime: '',
-      endTime: '',
-      instructions: '',
-    });
-  };
-
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormLoading(true);
@@ -104,7 +86,7 @@ const ExamsPage = () => {
       resetForm();
       fetchExams();
     } catch (error: any) {
-      setFormError(error.response?.data?.error?.message || 'Failed to create exam');
+      setFormError(error.response?.data?.error?.message || error.response?.data?.error || 'Failed to create exam');
     } finally {
       setFormLoading(false);
     }
@@ -122,7 +104,7 @@ const ExamsPage = () => {
       resetForm();
       fetchExams();
     } catch (error: any) {
-      setFormError(error.response?.data?.error?.message || 'Failed to update exam');
+      setFormError(error.response?.data?.error?.message || error.response?.data?.error || 'Failed to update exam');
     } finally {
       setFormLoading(false);
     }
@@ -138,36 +120,45 @@ const ExamsPage = () => {
       setSelectedExam(null);
       fetchExams();
     } catch (error: any) {
-      setFormError(error.response?.data?.error?.message || 'Failed to delete exam');
+      setFormError(error.response?.data?.error?.message || error.response?.data?.error || 'Failed to delete exam');
     } finally {
       setFormLoading(false);
     }
   };
 
-  const handleAddSchedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedExam) return;
-    setFormLoading(true);
-    setFormError('');
-
+  const handlePublish = async (examId: string) => {
+    setActionLoading(examId);
     try {
-      await examsApi.addSchedule(selectedExam._id, scheduleData);
-      setShowScheduleModal(false);
-      resetScheduleForm();
+      await api.post(`/exams/${examId}/publish`);
       fetchExams();
     } catch (error: any) {
-      setFormError(error.response?.data?.error?.message || 'Failed to add schedule');
+      alert(error.response?.data?.error || 'Failed to publish exam');
     } finally {
-      setFormLoading(false);
+      setActionLoading(null);
     }
   };
 
-  const handleStatusChange = async (exam: Exam, newStatus: ExamStatus) => {
+  const handleActivate = async (examId: string) => {
+    setActionLoading(examId);
     try {
-      await examsApi.update(exam._id, { status: newStatus });
+      await api.post(`/exams/${examId}/activate`);
       fetchExams();
-    } catch (error) {
-      console.error('Failed to update status:', error);
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Failed to activate exam');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleClose = async (examId: string) => {
+    setActionLoading(examId);
+    try {
+      await api.post(`/exams/${examId}/close`);
+      fetchExams();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Failed to close exam');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -179,8 +170,8 @@ const ExamsPage = () => {
       courseId: typeof exam.courseId === 'string' ? exam.courseId : exam.courseId._id,
       type: exam.type,
       totalPoints: exam.totalPoints,
-      passingScore: exam.passingScore || 60,
-      guidelines: exam.guidelines || '',
+      passingScore: exam.settings?.passingPercentage || 60,
+      guidelines: '',
     });
     setShowEditModal(true);
   };
@@ -190,24 +181,19 @@ const ExamsPage = () => {
     setShowDeleteModal(true);
   };
 
-  const openScheduleModal = (exam: Exam) => {
-    setSelectedExam(exam);
-    resetScheduleForm();
-    setShowScheduleModal(true);
-  };
-
   const openViewModal = (exam: Exam) => {
     setSelectedExam(exam);
     setShowViewModal(true);
   };
 
-  const getStatusBadge = (status: ExamStatus) => {
+  const getStatusBadge = (status: ExamStatus | string) => {
     const styles: Record<string, string> = {
       DRAFT: 'badge-gray',
-      SCHEDULED: 'badge-primary',
-      ONGOING: 'badge-warning',
+      PUBLISHED: 'badge-primary',
+      ACTIVE: 'badge-success',
+      CLOSED: 'badge-warning',
+      GRADING: 'badge-info',
       COMPLETED: 'badge-success',
-      CANCELLED: 'badge-danger',
     };
     return styles[status] || 'badge-gray';
   };
@@ -222,11 +208,6 @@ const ExamsPage = () => {
     });
   };
 
-  const formatDateTimeLocal = (date: string) => {
-    const d = new Date(date);
-    return d.toISOString().slice(0, 16);
-  };
-
   const canManage = user?.role === Role.ADMIN || user?.role === Role.FACULTY;
 
   return (
@@ -234,7 +215,7 @@ const ExamsPage = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Exams</h1>
-          <p className="text-gray-600">View and manage examinations</p>
+          <p className="text-gray-600">Manage examinations and assessments</p>
         </div>
         {canManage && (
           <button
@@ -252,7 +233,7 @@ const ExamsPage = () => {
 
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">
-        {['', 'DRAFT', 'SCHEDULED', 'ONGOING', 'COMPLETED'].map((status) => (
+        {['', 'DRAFT', 'PUBLISHED', 'ACTIVE', 'CLOSED', 'COMPLETED'].map((status) => (
           <button
             key={status}
             onClick={() => setStatusFilter(status)}
@@ -270,7 +251,7 @@ const ExamsPage = () => {
       {/* Exams list */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
-          <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
+          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
         </div>
       ) : exams.length === 0 ? (
         <div className="card p-12 text-center">
@@ -294,89 +275,122 @@ const ExamsPage = () => {
                       </span>
                     </div>
                     <p className="text-sm text-gray-500">
-                      {exam.courseId?.code} • {exam.type}
+                      {exam.courseId?.code} • {exam.type} • {exam.totalPoints} pts
                     </p>
                     {exam.description && (
                       <p className="text-sm text-gray-600 mt-1 line-clamp-2">{exam.description}</p>
+                    )}
+                    {exam.questionCount !== undefined && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        {exam.questionCount} question{exam.questionCount !== 1 ? 's' : ''}
+                      </p>
                     )}
                   </div>
                 </div>
 
                 {canManage && (
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex items-center gap-2 ml-4 flex-wrap">
+                    {/* View Button */}
                     <button
                       onClick={() => openViewModal(exam)}
                       className="btn btn-secondary text-sm py-1.5"
+                      title="View Details"
                     >
-                      View
+                      <Eye className="w-4 h-4" />
                     </button>
+
+                    {/* Build/Edit Questions Button */}
                     <button
                       onClick={() => navigate(`/exams/${exam._id}/builder`)}
                       className="btn btn-secondary text-sm py-1.5"
+                      title="Build Questions"
                     >
                       Build
                     </button>
 
-                    <button
-                      onClick={() => openScheduleModal(exam)}
-                      className="btn btn-secondary text-sm py-1.5"
-                    >
-                      + Schedule
-                    </button>
-                    <button
-                      onClick={() => openEditModal(exam)}
-                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => openDeleteModal(exam)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {exam.schedules?.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-gray-100">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Schedules</p>
-                  <div className="space-y-2">
-                    {exam.schedules.slice(0, 3).map((schedule) => (
-                      <div key={schedule._id} className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-2 rounded">
-                        <span className="font-medium min-w-[80px]">{schedule.section}</span>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-4 h-4" />
-                          {formatDate(schedule.startTime)}
-                        </span>
-                        {schedule.room && (
-                          <span className="flex items-center gap-1 text-gray-400">
-                            <MapPin className="w-4 h-4" />
-                            {schedule.room}
-                          </span>
+                    {/* Status Actions */}
+                    {exam.status === 'DRAFT' && (
+                      <button
+                        onClick={() => handlePublish(exam._id)}
+                        disabled={actionLoading === exam._id}
+                        className="btn btn-primary text-sm py-1.5 flex items-center gap-1"
+                        title="Publish Exam"
+                      >
+                        {actionLoading === exam._id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
                         )}
-                      </div>
-                    ))}
-                    {exam.schedules.length > 3 && (
-                      <p className="text-sm text-gray-400">+{exam.schedules.length - 3} more</p>
+                        Publish
+                      </button>
+                    )}
+
+                    {exam.status === 'PUBLISHED' && (
+                      <button
+                        onClick={() => handleActivate(exam._id)}
+                        disabled={actionLoading === exam._id}
+                        className="btn btn-success text-sm py-1.5 flex items-center gap-1"
+                        title="Activate Exam"
+                      >
+                        {actionLoading === exam._id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Play className="w-4 h-4" />
+                        )}
+                        Activate
+                      </button>
+                    )}
+
+                    {exam.status === 'ACTIVE' && (
+                      <button
+                        onClick={() => handleClose(exam._id)}
+                        disabled={actionLoading === exam._id}
+                        className="btn btn-warning text-sm py-1.5 flex items-center gap-1"
+                        title="Close Exam"
+                      >
+                        {actionLoading === exam._id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Pause className="w-4 h-4" />
+                        )}
+                        Close
+                      </button>
+                    )}
+
+                    {/* View Submissions - for published, active, or closed exams */}
+                    {['PUBLISHED', 'ACTIVE', 'CLOSED', 'GRADING', 'COMPLETED'].includes(exam.status) && (
+                      <button
+                        onClick={() => navigate(`/exams/${exam._id}/submissions`)}
+                        className="btn btn-secondary text-sm py-1.5 flex items-center gap-1"
+                        title="View Submissions"
+                      >
+                        <Users className="w-4 h-4" />
+                        Submissions
+                      </button>
+                    )}
+
+                    {/* Edit Button - only for drafts */}
+                    {exam.status === 'DRAFT' && (
+                      <button
+                        onClick={() => openEditModal(exam)}
+                        className="btn btn-secondary text-sm py-1.5"
+                        title="Edit Exam"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Delete Button - only for drafts */}
+                    {exam.status === 'DRAFT' && (
+                      <button
+                        onClick={() => openDeleteModal(exam)}
+                        className="btn btn-danger text-sm py-1.5"
+                        title="Delete Exam"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     )}
                   </div>
-                </div>
-              )}
-
-              <div className="mt-4 flex items-center justify-between text-sm">
-                <span className="text-gray-500">
-                  Total: <strong>{exam.totalPoints} pts</strong>
-                  {exam.passingScore && <> • Passing: <strong>{exam.passingScore} pts</strong></>}
-                </span>
-                {canManage && exam.status === 'DRAFT' && (
-                  <button
-                    onClick={() => handleStatusChange(exam, ExamStatus.SCHEDULED)}
-                    className="text-primary-600 hover:text-primary-700 font-medium"
-                  >
-                    Publish Exam →
-                  </button>
                 )}
               </div>
             </div>
@@ -385,104 +399,61 @@ const ExamsPage = () => {
       )}
 
       {/* Create Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title="Create New Exam"
-        size="lg"
-      >
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Exam">
         <form onSubmit={handleCreate} className="space-y-4">
           {formError && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
-              {formError}
-            </div>
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                className="input"
-                placeholder="Midterm Examination"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
-              <select
-                value={formData.courseId}
-                onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
-                className="input"
-                required
-              >
-                <option value="">Select course</option>
-                {courses.map((course) => (
-                  <option key={course._id} value={course._id}>
-                    {course.code} - {course.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
-                className="input"
-              >
-                <option value="QUIZ">Quiz</option>
-                <option value="MIDTERM">Midterm</option>
-                <option value="FINAL">Final</option>
-                <option value="PRACTICAL">Practical</option>
-                <option value="ORAL">Oral</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Total Points</label>
-              <input
-                type="number"
-                value={formData.totalPoints}
-                onChange={(e) => setFormData({ ...formData, totalPoints: parseInt(e.target.value) })}
-                className="input"
-                min={1}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Passing Score</label>
-              <input
-                type="number"
-                value={formData.passingScore}
-                onChange={(e) => setFormData({ ...formData, passingScore: parseInt(e.target.value) })}
-                className="input"
-                min={0}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                className="input"
-                rows={2}
-                placeholder="Exam description..."
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Guidelines</label>
-              <textarea
-                value={formData.guidelines}
-                onChange={(e) => setFormData({ ...formData, guidelines: e.target.value })}
-                className="input"
-                rows={3}
-                placeholder="1. Closed book exam&#10;2. No electronic devices&#10;3. Show all work"
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="input"
+              required
+            />
           </div>
-          
-          <div className="flex justify-end gap-3 pt-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
+            <select
+              value={formData.courseId}
+              onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
+              className="input"
+              required
+            >
+              <option value="">Select a course</option>
+              {courses.map((course) => (
+                <option key={course._id} value={course._id}>
+                  {course.code} - {course.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
+              className="input"
+            >
+              <option value="QUIZ">Quiz</option>
+              <option value="MIDTERM">Midterm</option>
+              <option value="FINAL">Final</option>
+              <option value="PRACTICAL">Practical</option>
+              <option value="ASSIGNMENT">Assignment</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="input"
+              rows={3}
+            />
+          </div>
+          <div className="flex justify-end gap-3">
             <button type="button" onClick={() => setShowCreateModal(false)} className="btn btn-secondary">
               Cancel
             </button>
@@ -494,98 +465,61 @@ const ExamsPage = () => {
       </Modal>
 
       {/* Edit Modal */}
-      <Modal
-        isOpen={showEditModal}
-        onClose={() => setShowEditModal(false)}
-        title="Edit Exam"
-        size="lg"
-      >
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Exam">
         <form onSubmit={handleEdit} className="space-y-4">
           {formError && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
-              {formError}
-            </div>
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                className="input"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
-                className="input"
-              >
-                <option value="QUIZ">Quiz</option>
-                <option value="MIDTERM">Midterm</option>
-                <option value="FINAL">Final</option>
-                <option value="PRACTICAL">Practical</option>
-                <option value="ORAL">Oral</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-              <select
-                value={selectedExam?.status}
-                onChange={(e) => setFormData({ ...formData, status: e.target.value } as any)}
-                className="input"
-              >
-                <option value="DRAFT">Draft</option>
-                <option value="SCHEDULED">Scheduled</option>
-                <option value="ONGOING">Ongoing</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Total Points</label>
-              <input
-                type="number"
-                value={formData.totalPoints}
-                onChange={(e) => setFormData({ ...formData, totalPoints: parseInt(e.target.value) })}
-                className="input"
-                min={1}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Passing Score</label>
-              <input
-                type="number"
-                value={formData.passingScore}
-                onChange={(e) => setFormData({ ...formData, passingScore: parseInt(e.target.value) })}
-                className="input"
-                min={0}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                className="input"
-                rows={2}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Guidelines</label>
-              <textarea
-                value={formData.guidelines}
-                onChange={(e) => setFormData({ ...formData, guidelines: e.target.value })}
-                className="input"
-                rows={3}
-              />
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="input"
+              required
+            />
           </div>
-          <div className="flex justify-end gap-3 pt-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
+            <select
+              value={formData.courseId}
+              onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
+              className="input"
+              required
+            >
+              <option value="">Select a course</option>
+              {courses.map((course) => (
+                <option key={course._id} value={course._id}>
+                  {course.code} - {course.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
+              className="input"
+            >
+              <option value="QUIZ">Quiz</option>
+              <option value="MIDTERM">Midterm</option>
+              <option value="FINAL">Final</option>
+              <option value="PRACTICAL">Practical</option>
+              <option value="ASSIGNMENT">Assignment</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="input"
+              rows={3}
+            />
+          </div>
+          <div className="flex justify-end gap-3">
             <button type="button" onClick={() => setShowEditModal(false)} className="btn btn-secondary">
               Cancel
             </button>
@@ -597,124 +531,38 @@ const ExamsPage = () => {
       </Modal>
 
       {/* Delete Modal */}
-      <Modal
-        isOpen={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
-        title="Delete Exam"
-        size="sm"
-      >
+      <Modal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} title="Delete Exam">
         <div className="space-y-4">
           <p className="text-gray-600">
-            Are you sure you want to delete <strong>{selectedExam?.title}</strong>? This action cannot be undone.
+            Are you sure you want to delete "{selectedExam?.title}"? This action cannot be undone.
           </p>
+          {formError && (
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{formError}</div>
+          )}
           <div className="flex justify-end gap-3">
             <button onClick={() => setShowDeleteModal(false)} className="btn btn-secondary">
               Cancel
             </button>
             <button onClick={handleDelete} disabled={formLoading} className="btn btn-danger">
-              {formLoading ? 'Deleting...' : 'Delete'}
+              {formLoading ? 'Deleting...' : 'Delete Exam'}
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* Add Schedule Modal */}
-      <Modal
-        isOpen={showScheduleModal}
-        onClose={() => setShowScheduleModal(false)}
-        title={`Add Schedule to ${selectedExam?.title}`}
-        size="lg"
-      >
-        <form onSubmit={handleAddSchedule} className="space-y-4">
-          {formError && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
-              {formError}
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Section</label>
-              <input
-                type="text"
-                value={scheduleData.section}
-                onChange={(e) => setScheduleData({ ...scheduleData, section: e.target.value })}
-                className="input"
-                placeholder="Section A"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Room</label>
-              <input
-                type="text"
-                value={scheduleData.room}
-                onChange={(e) => setScheduleData({ ...scheduleData, room: e.target.value })}
-                className="input"
-                placeholder="Room 301"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
-              <input
-                type="datetime-local"
-                value={scheduleData.startTime}
-                onChange={(e) => setScheduleData({ ...scheduleData, startTime: e.target.value })}
-                className="input"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
-              <input
-                type="datetime-local"
-                value={scheduleData.endTime}
-                onChange={(e) => setScheduleData({ ...scheduleData, endTime: e.target.value })}
-                className="input"
-                required
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Meeting Link (optional)</label>
-              <input
-                type="url"
-                value={scheduleData.meetingLink}
-                onChange={(e) => setScheduleData({ ...scheduleData, meetingLink: e.target.value })}
-                className="input"
-                placeholder="https://zoom.us/j/..."
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Instructions</label>
-              <textarea
-                value={scheduleData.instructions}
-                onChange={(e) => setScheduleData({ ...scheduleData, instructions: e.target.value })}
-                className="input"
-                rows={2}
-                placeholder="Please arrive 15 minutes early..."
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={() => setShowScheduleModal(false)} className="btn btn-secondary">
-              Cancel
-            </button>
-            <button type="submit" disabled={formLoading} className="btn btn-primary">
-              {formLoading ? 'Adding...' : 'Add Schedule'}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* View Exam Modal */}
-      <Modal
-        isOpen={showViewModal}
-        onClose={() => setShowViewModal(false)}
-        title={selectedExam?.title || 'Exam Details'}
-        size="lg"
-      >
+      {/* View Modal */}
+      <Modal isOpen={showViewModal} onClose={() => setShowViewModal(false)} title="Exam Details" size="lg">
         {selectedExam && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-500">Title</p>
+                <p className="font-medium">{selectedExam.title}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Status</p>
+                <span className={`badge ${getStatusBadge(selectedExam.status)}`}>{selectedExam.status}</span>
+              </div>
               <div>
                 <p className="text-sm text-gray-500">Course</p>
                 <p className="font-medium">{selectedExam.courseId?.code} - {selectedExam.courseId?.name}</p>
@@ -728,8 +576,18 @@ const ExamsPage = () => {
                 <p className="font-medium">{selectedExam.totalPoints}</p>
               </div>
               <div>
+                <p className="text-sm text-gray-500">Questions</p>
+                <p className="font-medium">{selectedExam.questionCount || 0}</p>
+              </div>
+              {selectedExam.settings?.timeLimitMinutes && (
+                <div>
+                  <p className="text-sm text-gray-500">Time Limit</p>
+                  <p className="font-medium">{selectedExam.settings.timeLimitMinutes} minutes</p>
+                </div>
+              )}
+              <div>
                 <p className="text-sm text-gray-500">Passing Score</p>
-                <p className="font-medium">{selectedExam.passingScore || 'N/A'}</p>
+                <p className="font-medium">{selectedExam.settings?.passingPercentage || 60}%</p>
               </div>
             </div>
             {selectedExam.description && (
@@ -738,38 +596,12 @@ const ExamsPage = () => {
                 <p className="text-gray-700">{selectedExam.description}</p>
               </div>
             )}
-            {selectedExam.guidelines && (
+            {selectedExam.instructions && (
               <div>
-                <p className="text-sm text-gray-500">Guidelines</p>
-                <p className="text-gray-700 whitespace-pre-wrap">{selectedExam.guidelines}</p>
+                <p className="text-sm text-gray-500">Instructions</p>
+                <p className="text-gray-700 whitespace-pre-wrap">{selectedExam.instructions}</p>
               </div>
             )}
-            {selectedExam.schedules?.length > 0 && (
-              <div>
-                <p className="text-sm text-gray-500 mb-2">Schedules</p>
-                <div className="space-y-2">
-                  {selectedExam.schedules.map((schedule) => (
-                    <div key={schedule._id} className="bg-gray-50 p-3 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{schedule.section}</span>
-                        {schedule.room && <span className="text-gray-500">{schedule.room}</span>}
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        {formatDate(schedule.startTime)} - {formatDate(schedule.endTime)}
-                      </p>
-                      {schedule.instructions && (
-                        <p className="text-sm text-gray-500 mt-1">{schedule.instructions}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex justify-end pt-4">
-              <button onClick={() => setShowViewModal(false)} className="btn btn-secondary">
-                Close
-              </button>
-            </div>
           </div>
         )}
       </Modal>
