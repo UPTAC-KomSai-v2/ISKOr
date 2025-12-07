@@ -77,22 +77,36 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Initialize WebSocket
 wsService.initialize(server);
 
-// Start server
-server.listen(config.port, () => {
+// Start server (LAN enabled)
+server.listen(config.port, "0.0.0.0", () => {
+  const os = require("os");
+  const nets = os.networkInterfaces();
+  let lanIP = "localhost";
+
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]!) {
+      if (net.family === "IPv4" && !net.internal) {
+        lanIP = net.address;
+      }
+    }
+  }
+
   logger.info(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   ExamFlow EIMS Server                                        ║
 ║   ─────────────────                                           ║
 ║                                                               ║
-║   🚀 Server running on http://localhost:${config.port}               ║
-║   📡 WebSocket available at ws://localhost:${config.port}/ws         ║
-║   🔗 MongoDB: ${config.mongodb.uri.substring(0, 40)}...              
-║   🌍 Environment: ${config.nodeEnv}                                  ║
+║   🚀 Localhost: http://localhost:${config.port}               
+║   🌐 LAN:       http://${lanIP}:${config.port}                 
+║   📡 WebSocket: ws://${lanIP}:${config.port}/ws                
+║   🔗 MongoDB: ${config.mongodb.uri.substring(0, 40)}...        
+║   🌍 Environment: ${config.nodeEnv}                            
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
+
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

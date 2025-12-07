@@ -18,9 +18,12 @@ export const config = {
   },
 
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
-    credentials: true,
+  origin: (process.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map(o => o.trim()),
+  credentials: true,
   },
+
 
   upload: {
     dir: process.env.UPLOAD_DIR || './uploads',

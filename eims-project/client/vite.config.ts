@@ -10,14 +10,15 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,                // <-- important
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://192.168.1.7:3001',   // <-- use LAN IP
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:3001',
+        target: 'ws://192.168.1.7:3001',     // <-- same here
         ws: true,
       },
     },
