@@ -364,44 +364,17 @@ router.get(
 
       // Check access
       if (user.role === Role.STUDENT) {
-        if ((submission.studentId as any)._id.toString() !== user.id) {
+        if (submission.studentId._id.toString() !== user.id) {
           return res.status(403).json({ error: 'Access denied' });
         }
         // Students can only see their results if returned or if showResults is enabled
+        const exam = submission.examId as any;
         if (submission.status === SubmissionStatus.IN_PROGRESS) {
           return res.status(400).json({ error: 'Submission still in progress' });
         }
       }
 
-      // Fetch questions for this exam
-      const examId = (submission.examId as any)._id;
-      const questionsRaw = await Question.find({ examId }).sort({ order: 1 });
-
-      // Transform questions - for students, sanitize based on exam settings
-      let questions: any[] = questionsRaw.map(q => q.toObject());
-      
-      if (user.role === Role.STUDENT) {
-        const exam = submission.examId as any;
-        const showCorrectAnswers = exam.settings?.showCorrectAnswers && 
-          (submission.status === 'GRADED' || submission.status === 'RETURNED');
-        
-        questions = questions.map(qObj => {
-          if (!showCorrectAnswers) {
-            // Hide correct answers
-            if (qObj.choices) {
-              qObj.choices = qObj.choices.map((c: any) => ({
-                _id: c._id,
-                text: c.text,
-              }));
-            }
-            delete qObj.correctAnswer;
-            delete qObj.acceptedAnswers;
-          }
-          return qObj;
-        });
-      }
-
-      res.json({ submission, questions });
+      res.json({ submission });
     } catch (error) {
       logger.error('Error fetching submission:', error);
       res.status(500).json({ error: 'Failed to fetch submission' });

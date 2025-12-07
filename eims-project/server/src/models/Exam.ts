@@ -26,9 +26,12 @@ export interface IExamSettings {
   allowReview: boolean;
   maxAttempts: number;
   timeLimitMinutes?: number;
+  autoSubmitOnTimeExpire: boolean;
+  showTimerWarning: boolean;
+  warningThresholdMinutes: number;
   passingPercentage: number;
   lateSubmissionAllowed: boolean;
-  lateSubmissionPenalty: number; // percentage deducted
+  lateSubmissionPenalty: number;
 }
 
 export interface IExam extends Document {
@@ -42,14 +45,15 @@ export interface IExam extends Document {
   status: ExamStatus;
   totalPoints: number;
   questionCount: number;
-  // Timing
   startDate?: Date;
   endDate?: Date;
-  // Settings
+  examWindows?: {
+    startTime: Date;
+    endTime: Date;
+    sections?: string[];
+  }[];
   settings: IExamSettings;
-  // Access
   allowedSections?: string[];
-  // Files/attachments
   attachments?: {
     filename: string;
     originalName: string;
@@ -71,6 +75,9 @@ const examSettingsSchema = new Schema<IExamSettings>(
     allowReview: { type: Boolean, default: true },
     maxAttempts: { type: Number, default: 1 },
     timeLimitMinutes: Number,
+    autoSubmitOnTimeExpire: { type: Boolean, default: true },
+    showTimerWarning: { type: Boolean, default: true },
+    warningThresholdMinutes: { type: Number, default: 5 },
     passingPercentage: { type: Number, default: 60 },
     lateSubmissionAllowed: { type: Boolean, default: false },
     lateSubmissionPenalty: { type: Number, default: 0 },
@@ -80,47 +87,23 @@ const examSettingsSchema = new Schema<IExamSettings>(
 
 const examSchema = new Schema<IExam>(
   {
-    title: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+    title: { type: String, required: true, trim: true },
     description: String,
     instructions: String,
-    courseId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Course',
-      required: true,
-    },
-    createdById: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    type: {
-      type: String,
-      enum: Object.values(ExamType),
-      required: true,
-    },
-    status: {
-      type: String,
-      enum: Object.values(ExamStatus),
-      default: ExamStatus.DRAFT,
-    },
-    totalPoints: {
-      type: Number,
-      default: 0,
-    },
-    questionCount: {
-      type: Number,
-      default: 0,
-    },
+    courseId: { type: Schema.Types.ObjectId, ref: 'Course', required: true },
+    createdById: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    type: { type: String, enum: Object.values(ExamType), required: true },
+    status: { type: String, enum: Object.values(ExamStatus), default: ExamStatus.DRAFT },
+    totalPoints: { type: Number, default: 0 },
+    questionCount: { type: Number, default: 0 },
     startDate: Date,
     endDate: Date,
-    settings: {
-      type: examSettingsSchema,
-      default: () => ({}),
-    },
+    examWindows: [{
+      startTime: Date,
+      endTime: Date,
+      sections: [String],
+    }],
+    settings: { type: examSettingsSchema, default: () => ({}) },
     allowedSections: [String],
     attachments: [{
       filename: String,
@@ -130,9 +113,7 @@ const examSchema = new Schema<IExam>(
       url: String,
     }],
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 examSchema.index({ courseId: 1 });

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { authApi } from '@/services/api';
-import { Eye, EyeOff, GraduationCap } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -37,46 +37,44 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex">
-      {/* Left side - branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary-600 to-primary-800 text-white p-12 flex-col justify-center">
-        <div className="max-w-md">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-              <GraduationCap className="w-7 h-7" />
-            </div>
-            <h1 className="text-3xl font-bold">ExamFlow</h1>
+    <div 
+      className="min-h-screen flex items-center justify-center p-4 relative"
+      style={{
+        backgroundImage: `url('/login-bg.jpg')`, // Place your background image in public folder
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      }}
+    >
+      {/* Dark overlay for better readability */}
+      <div className="" />
+      
+      {/* Main container */}
+      <div className="relative z-10 w-full max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-16">
+        
+        {/* Left side - Branding */}
+        <div className="text-white text-center lg:text-left lg:flex-1">
+          {/* ISKOR Logo */}
+          <div className="mb-6">
+            <img 
+            />
+            
           </div>
-          <p className="text-xl mb-6">Exam Information Management System for UP Tacloban</p>
-          <ul className="space-y-4 text-white/80">
-            <li className="flex items-center gap-3">
-              <span className="w-2 h-2 bg-white/60 rounded-full" />
-              Create and manage examinations
-            </li>
-            <li className="flex items-center gap-3">
-              <span className="w-2 h-2 bg-white/60 rounded-full" />
-              Real-time announcements & notifications
-            </li>
-            <li className="flex items-center gap-3">
-              <span className="w-2 h-2 bg-white/60 rounded-full" />
-              Results publishing & regrade workflows
-            </li>
-          </ul>
+          
+          
+            
         </div>
-      </div>
 
-      {/* Right side - login form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50">
+        {/* Right side - Login Card with Glassmorphism */}
         <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center">
-              <GraduationCap className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">ExamFlow</h1>
-          </div>
-
-          <div className="card p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Welcome back</h2>
+          {/* Glass card */}
+          <div 
+            className="backdrop-blur-md bg-white/85 rounded-2xl shadow-2xl p-8 border border-white/20"
+            style={{
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.2)',
+            }}
+          >
+            <h2 className="text-2xl font-bold text-gray-900 mb-1">Welcome back</h2>
             <p className="text-gray-600 mb-6">Sign in to your account</p>
 
             {error && (
@@ -94,7 +92,7 @@ const LoginPage = () => {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="input"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors bg-white/80"
                   placeholder="you@up.edu.ph"
                   required
                 />
@@ -109,7 +107,7 @@ const LoginPage = () => {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="input pr-10"
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors pr-10 bg-white/80"
                     placeholder="••••••••"
                     required
                   />
@@ -126,7 +124,7 @@ const LoginPage = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="btn btn-primary w-full flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 bg-[#7D1C2C] hover:bg-[#6a1725] text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 {loading ? (
                   <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -149,7 +147,7 @@ const LoginPage = () => {
                     key={cred.email}
                     type="button"
                     onClick={() => fillCredentials(cred.email)}
-                    className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-gray-700"
                   >
                     {cred.label}
                   </button>
@@ -158,7 +156,8 @@ const LoginPage = () => {
             </div>
           </div>
 
-          <p className="text-center text-sm text-gray-500 mt-6">
+          {/* Footer text */}
+          <p className="text-center text-sm text-white/90 mt-6 drop-shadow-md">
             CMSC 135 • Data Communication and Networking
           </p>
         </div>
