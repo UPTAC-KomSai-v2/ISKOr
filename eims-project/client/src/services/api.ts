@@ -10,6 +10,54 @@ export const api = axios.create({
   },
 });
 
+// Question types used in the backend
+export type QuestionType =
+  | 'MULTIPLE_CHOICE'
+  | 'TRUE_FALSE'
+  | 'SHORT_ANSWER'
+  | 'ESSAY'
+  | 'MATCHING'
+  | 'FILL_IN_BLANK';
+
+export interface Choice {
+  _id?: string;
+  text: string;
+  isCorrect: boolean;
+}
+
+export interface Question {
+  _id: string;
+  examId: string;
+  type: QuestionType;
+  questionText: string;
+  points: number;
+  order: number;
+  choices?: Choice[];
+  correctAnswer?: boolean;
+  acceptedAnswers?: string[];
+  caseSensitive?: boolean;
+  matchingPairs?: { _id?: string; left: string; right: string }[];
+  rubric?: string;
+  maxWords?: number;
+  imageUrl?: string;
+  explanation?: string;
+}
+
+export const questionsApi = {
+  getByExam: (examId: string) =>
+    api.get<Question[]>(`/questions/exam/${examId}`).then(res => res.data),
+
+  create: (payload: Partial<Question> & { examId: string }) =>
+    api.post<Question>('/questions', payload).then(res => res.data),
+
+  update: (id: string, payload: Partial<Question>) =>
+    api.put<Question>(`/questions/${id}`, payload).then(res => res.data),
+
+  remove: (id: string) =>
+    api.delete<{ message: string }>(`/questions/${id}`).then(res => res.data),
+};
+
+
 // Request interceptor - add auth token
 api.interceptors.request.use(
   (config) => {
