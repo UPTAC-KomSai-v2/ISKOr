@@ -14,6 +14,7 @@ import AnnouncementsPage from '@/pages/AnnouncementsPage';
 import UsersPage from '@/pages/UsersPage';
 import NotificationsPage from '@/pages/NotificationsPage';
 import ProfilePage from '@/pages/ProfilePage';
+import ExamPreviewPage from '@/pages/ExamPreviewPage';
 import ProfileSettingsPage from '@/pages/ProfileSettingsPage';
 
 
@@ -41,6 +42,7 @@ function App() {
                   <Route path="/exams/:examId/edit" element={<ExamCreatorPage />} />
                   <Route path="/exams/:examId/take" element={<TakeExamPage />} />
                   <Route path="/exams/:examId/builder" element={<ExamBuilderPage />} />
+                  <Route path="/exams/:examId/preview" element={<ExamPreviewPage />} />
                   <Route path="/results" element={<ResultsPage />} />
                   <Route path="/submissions/:submissionId" element={<ViewSubmissionPage />} />
                   <Route path="/announcements" element={<AnnouncementsPage />} />

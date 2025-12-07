@@ -62,7 +62,12 @@ const ExamBuilderPage = () => {
         >
           ← Back to Exams
         </button>
-
+        <button
+            onClick={() => navigate(`/exams/${examId}/preview`)}
+            className="btn btn-secondary"
+            >
+            Preview Exam
+        </button>
         <h1 className="text-xl font-semibold">{exam.title}</h1>
         <p className="text-sm text-gray-600">{exam.description}</p>
 
@@ -128,6 +133,7 @@ const ExamBuilderPage = () => {
           />
         )}
       </main>
+
     </div>
   );
 };
