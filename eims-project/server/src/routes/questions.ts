@@ -37,7 +37,7 @@ router.get(
           const qObj = q.toObject();
           // Remove correct answer indicators
           if (qObj.choices) {
-            qObj.choices = qObj.choices.map((c: any) => ({
+            (qObj as any).choices = qObj.choices.map((c: any) => ({
               _id: c._id,
               text: c.text,
             }));

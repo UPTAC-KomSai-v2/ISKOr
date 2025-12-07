@@ -4,6 +4,7 @@ import { examsApi, coursesApi } from '@/services/api';
 import { Exam, ExamStatus, ExamType, Course, Role } from '@/types';
 import Modal from '@/components/Modal';
 import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const ExamsPage = () => {
   const { user } = useAuthStore();
@@ -11,6 +12,7 @@ const ExamsPage = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const navigate = useNavigate();
 
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -309,6 +311,13 @@ const ExamsPage = () => {
                       View
                     </button>
                     <button
+                      onClick={() => navigate(`/exams/${exam._id}/builder`)}
+                      className="btn btn-secondary text-sm py-1.5"
+                    >
+                      Build
+                    </button>
+
+                    <button
                       onClick={() => openScheduleModal(exam)}
                       className="btn btn-secondary text-sm py-1.5"
                     >
@@ -472,6 +481,7 @@ const ExamsPage = () => {
               />
             </div>
           </div>
+          
           <div className="flex justify-end gap-3 pt-4">
             <button type="button" onClick={() => setShowCreateModal(false)} className="btn btn-secondary">
               Cancel
