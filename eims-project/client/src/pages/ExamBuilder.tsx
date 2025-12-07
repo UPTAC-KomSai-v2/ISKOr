@@ -55,7 +55,7 @@ const ExamBuilderPage = () => {
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Left: Exam info */}
-      <aside className="w-80 border-r bg-white p-6 flex flex-col gap-3">
+      <aside className="w-80 border-r bg-white p-6 flex flex-col items-start gap-3">
         <button
           className="text-sm text-gray-500 mb-2"
           onClick={() => navigate('/exams')}

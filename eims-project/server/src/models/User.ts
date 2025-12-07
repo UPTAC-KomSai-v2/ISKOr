@@ -38,7 +38,7 @@ const userSchema = new Schema<IUser>(
     email: {
       type: String,
       required: true,
-      unique: true,
+      unique: true, // keeps the unique index
       lowercase: true,
       trim: true,
     },
@@ -70,12 +70,12 @@ const userSchema = new Schema<IUser>(
     bio: { type: String, maxlength: 500 },
     phoneNumber: String,
     // Student fields
-    studentNumber: { type: String, sparse: true },
+    studentNumber: { type: String, sparse: true }, // keeps sparse index
     program: String,
     yearLevel: Number,
     section: String,
     // Faculty fields
-    facultyId: { type: String, sparse: true },
+    facultyId: { type: String, sparse: true }, // keeps sparse index
     department: String,
     designation: String,
   },
@@ -96,10 +96,10 @@ userSchema.methods.comparePassword = async function (password: string): Promise<
   return bcrypt.compare(password, this.passwordHash);
 };
 
-// Indexes
-userSchema.index({ email: 1 });
-userSchema.index({ role: 1 });
-userSchema.index({ studentNumber: 1 });
-userSchema.index({ facultyId: 1 });
+// Remove duplicate index declarations
+// userSchema.index({ email: 1 }); // removed
+// userSchema.index({ studentNumber: 1 }); // removed
+// userSchema.index({ facultyId: 1 }); // removed
+userSchema.index({ role: 1 }); // role index can stay
 
 export const User = mongoose.model<IUser>('User', userSchema);

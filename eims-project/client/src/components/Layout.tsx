@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react'; 
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { authApi, notificationsApi } from '@/services/api';
@@ -75,11 +75,11 @@ const Layout = ({ children }: LayoutProps) => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 lg:translate-x-0 ${
+        className={`fixed top-0 left-0 z-50 h-full w-64 bg-[#002223] text-white transform transition-transform duration-200 lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
+        <div className="flex items-center justify-between h-16 px-4 border-b border-gray-700">
           <Link to="/dashboard" className="flex items-center gap-2">
             <img
               src={IskorLogo}
@@ -88,7 +88,7 @@ const Layout = ({ children }: LayoutProps) => {
             />
           </Link>
           <button
-            className="lg:hidden p-2 text-gray-500 hover:text-gray-700"
+            className="lg:hidden p-2 text-white hover:text-gray-300"
             onClick={() => setSidebarOpen(false)}
           >
             <X className="w-5 h-5" />
@@ -104,12 +104,12 @@ const Layout = ({ children }: LayoutProps) => {
                 to={item.href}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                   isActive
-                    ? 'bg-primary-50 text-primary-600'
-                    : 'text-gray-600 hover:bg-gray-100'
+                    ? 'bg-[#004444] text-white'
+                    : 'text-white hover:bg-[#003333]'
                 }`}
                 onClick={() => setSidebarOpen(false)}
               >
-                <item.icon className="w-5 h-5" />
+                <item.icon className="w-5 h-5 text-white" />
                 {item.name}
               </Link>
             );

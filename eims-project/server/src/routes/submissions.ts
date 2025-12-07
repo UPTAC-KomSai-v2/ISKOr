@@ -52,7 +52,6 @@ router.post(
         examId: new mongoose.Types.ObjectId(examId),
         studentId: new mongoose.Types.ObjectId(studentId),
       });
-
       if (existingAttempts >= exam.settings.maxAttempts) {
         return res.status(400).json({ error: 'Maximum attempts reached' });
       }
@@ -63,18 +62,25 @@ router.post(
         studentId: new mongoose.Types.ObjectId(studentId),
         status: SubmissionStatus.IN_PROGRESS,
       });
-
       if (inProgress) {
         // Return existing in-progress submission
         return res.json(inProgress);
       }
+
+      // Safely determine next attempt number
+      const lastSubmission = await ExamSubmission.findOne({
+        examId: new mongoose.Types.ObjectId(examId),
+        studentId: new mongoose.Types.ObjectId(studentId),
+      }).sort({ attemptNumber: -1 });
+
+      const attemptNumber = lastSubmission ? lastSubmission.attemptNumber + 1 : 1;
 
       // Create new submission
       const submission = new ExamSubmission({
         examId: new mongoose.Types.ObjectId(examId),
         studentId: new mongoose.Types.ObjectId(studentId),
         status: SubmissionStatus.IN_PROGRESS,
-        attemptNumber: existingAttempts + 1,
+        attemptNumber,
         startedAt: new Date(),
         maxScore: exam.totalPoints,
         ipAddress: req.ip,
@@ -90,6 +96,7 @@ router.post(
     }
   }
 );
+
 
 // Save answer (auto-save during exam)
 router.put(

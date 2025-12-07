@@ -12,7 +12,7 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
     token: {
       type: String,
       required: true,
-      unique: true,
+      unique: true, // This automatically creates a unique index
     },
     userId: {
       type: Schema.Types.ObjectId,
@@ -29,9 +29,8 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
   }
 );
 
-// Index for faster lookups and TTL for auto-deletion
-refreshTokenSchema.index({ token: 1 });
-refreshTokenSchema.index({ userId: 1 });
-refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Keep only necessary indexes
+refreshTokenSchema.index({ userId: 1 }); // For faster lookups by userId
+refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index for auto-deletion
 
 export const RefreshToken = mongoose.model<IRefreshToken>('RefreshToken', refreshTokenSchema);
