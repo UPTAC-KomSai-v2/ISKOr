@@ -57,7 +57,7 @@ const Layout = ({ children }: LayoutProps) => {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
     { name: 'Courses', href: '/courses', icon: BookOpen, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
     { name: 'Exams', href: '/exams', icon: FileText, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
-    { name: 'Results', href: '/results', icon: ClipboardList, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
+    { name: 'Results', href: '/results', icon: ClipboardList, roles: [Role.STUDENT] },
     { name: 'Announcements', href: '/announcements', icon: Megaphone, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
     { name: 'Users', href: '/users', icon: Users, roles: [Role.ADMIN] },
   ].filter((item) => item.roles.includes(user?.role as Role));

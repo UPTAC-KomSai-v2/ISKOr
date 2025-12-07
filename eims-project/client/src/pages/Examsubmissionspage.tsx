@@ -508,21 +508,7 @@ const ExamSubmissionsPage = () => {
                         className="input"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Feedback</label>
-                      <input
-                        type="text"
-                        value={gradeInfo.feedback}
-                        onChange={(e) =>
-                          setGradingData({
-                            ...gradingData,
-                            [question._id]: { ...gradeInfo, feedback: e.target.value },
-                          })
-                        }
-                        placeholder="Optional feedback"
-                        className="input"
-                      />
-                    </div>
+                    
                   </div>
 
                   <button

@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
-import { ExamSubmission, SubmissionStatus, Exam, ExamStatus, Question, QuestionType, Enrollment, Notification } from '../models';
+import { ExamSubmission, SubmissionStatus, Exam, ExamStatus, Question, QuestionType, Enrollment, Notification, NotificationType } from '../models';
 import { authenticate, authorize } from '../middleware/auth';
 import { Role } from '../models/User';
 import mongoose from 'mongoose';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -15,7 +16,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { examId } = req.params;
-      const studentId = req.user!._id;
+      const studentId = req.user!.id;
 
       const exam = await Exam.findById(examId);
       if (!exam) {
@@ -39,7 +40,7 @@ router.post(
       // Check student is enrolled in course
       const enrollment = await Enrollment.findOne({
         courseId: exam.courseId,
-        studentId,
+        studentId: new mongoose.Types.ObjectId(studentId),
         isActive: true,
       });
       if (!enrollment) {
@@ -48,8 +49,8 @@ router.post(
 
       // Check attempt limit
       const existingAttempts = await ExamSubmission.countDocuments({
-        examId,
-        studentId,
+        examId: new mongoose.Types.ObjectId(examId),
+        studentId: new mongoose.Types.ObjectId(studentId),
       });
 
       if (existingAttempts >= exam.settings.maxAttempts) {
@@ -58,8 +59,8 @@ router.post(
 
       // Check for in-progress submission
       const inProgress = await ExamSubmission.findOne({
-        examId,
-        studentId,
+        examId: new mongoose.Types.ObjectId(examId),
+        studentId: new mongoose.Types.ObjectId(studentId),
         status: SubmissionStatus.IN_PROGRESS,
       });
 
@@ -70,8 +71,8 @@ router.post(
 
       // Create new submission
       const submission = new ExamSubmission({
-        examId,
-        studentId,
+        examId: new mongoose.Types.ObjectId(examId),
+        studentId: new mongoose.Types.ObjectId(studentId),
         status: SubmissionStatus.IN_PROGRESS,
         attemptNumber: existingAttempts + 1,
         startedAt: new Date(),
@@ -84,7 +85,7 @@ router.post(
 
       res.status(201).json(submission);
     } catch (error) {
-      console.error('Error starting exam:', error);
+      logger.error('Error starting exam:', error);
       res.status(500).json({ error: 'Failed to start exam' });
     }
   }
@@ -99,14 +100,14 @@ router.put(
     try {
       const { submissionId } = req.params;
       const { questionId, selectedChoiceId, booleanAnswer, textAnswer, matchingAnswers } = req.body;
-      const studentId = req.user!._id;
+      const studentId = req.user!.id;
 
       const submission = await ExamSubmission.findById(submissionId);
       if (!submission) {
         return res.status(404).json({ error: 'Submission not found' });
       }
 
-      if (submission.studentId.toString() !== studentId.toString()) {
+      if (submission.studentId.toString() !== studentId) {
         return res.status(403).json({ error: 'Not your submission' });
       }
 
@@ -119,29 +120,40 @@ router.put(
         (a) => a.questionId.toString() === questionId
       );
 
-      const answerData = {
-        questionId: new mongoose.Types.ObjectId(questionId),
-        selectedChoiceId: selectedChoiceId ? new mongoose.Types.ObjectId(selectedChoiceId) : undefined,
-        booleanAnswer,
-        textAnswer,
-        matchingAnswers,
-        pointsEarned: 0,
-      };
-
       if (existingAnswerIndex >= 0) {
-        submission.answers[existingAnswerIndex] = {
-          ...submission.answers[existingAnswerIndex],
-          ...answerData,
-        };
+        // Update existing answer
+        const existingAnswer = submission.answers[existingAnswerIndex];
+        if (selectedChoiceId !== undefined) {
+          existingAnswer.selectedChoiceId = selectedChoiceId ? new mongoose.Types.ObjectId(selectedChoiceId) : undefined;
+        }
+        if (booleanAnswer !== undefined) {
+          existingAnswer.booleanAnswer = booleanAnswer;
+        }
+        if (textAnswer !== undefined) {
+          existingAnswer.textAnswer = textAnswer;
+        }
+        if (matchingAnswers !== undefined) {
+          existingAnswer.matchingAnswers = matchingAnswers;
+        }
       } else {
-        submission.answers.push(answerData as any);
+        // Create new answer
+        submission.answers.push({
+          questionId: new mongoose.Types.ObjectId(questionId),
+          selectedChoiceId: selectedChoiceId ? new mongoose.Types.ObjectId(selectedChoiceId) : undefined,
+          booleanAnswer,
+          textAnswer,
+          matchingAnswers,
+          pointsEarned: 0,
+        } as any);
       }
+
+      submission.markModified('answers');
 
       await submission.save();
 
       res.json({ message: 'Answer saved' });
     } catch (error) {
-      console.error('Error saving answer:', error);
+      logger.error('Error saving answer:', error);
       res.status(500).json({ error: 'Failed to save answer' });
     }
   }
@@ -155,14 +167,14 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { submissionId } = req.params;
-      const studentId = req.user!._id;
+      const studentId = req.user!.id;
 
       const submission = await ExamSubmission.findById(submissionId);
       if (!submission) {
         return res.status(404).json({ error: 'Submission not found' });
       }
 
-      if (submission.studentId.toString() !== studentId.toString()) {
+      if (submission.studentId.toString() !== studentId) {
         return res.status(403).json({ error: 'Not your submission' });
       }
 
@@ -276,16 +288,16 @@ router.post(
       if (hasEssayQuestions) {
         await Notification.create({
           userId: exam.createdById,
-          type: 'EXAM',
+          type: NotificationType.SYSTEM,
           title: 'Exam Submission Requires Grading',
           message: `A student has submitted "${exam.title}" and requires manual grading.`,
-          link: `/exams/${exam._id}/submissions`,
+          data: { examId: exam._id, submissionId: submission._id },
         });
       }
 
       res.json(submission);
     } catch (error) {
-      console.error('Error submitting exam:', error);
+      logger.error('Error submitting exam:', error);
       res.status(500).json({ error: 'Failed to submit exam' });
     }
   }
@@ -310,7 +322,7 @@ router.get(
 
       // Check access
       if (user.role === Role.STUDENT) {
-        if (submission.studentId._id.toString() !== user._id.toString()) {
+        if (submission.studentId._id.toString() !== user.id) {
           return res.status(403).json({ error: 'Access denied' });
         }
       }
@@ -359,7 +371,7 @@ router.get(
 
       res.json({ submission, questions });
     } catch (error) {
-      console.error('Error fetching submission:', error);
+      logger.error('Error fetching submission:', error);
       res.status(500).json({ error: 'Failed to fetch submission' });
     }
   }
@@ -374,13 +386,13 @@ router.get(
     try {
       const { examId } = req.params;
 
-      const submissions = await ExamSubmission.find({ examId })
+      const submissions = await ExamSubmission.find({ examId: new mongoose.Types.ObjectId(examId) })
         .populate('studentId', 'firstName lastName email studentNumber section')
         .sort({ submittedAt: -1 });
 
       res.json(submissions);
     } catch (error) {
-      console.error('Error fetching submissions:', error);
+      logger.error('Error fetching submissions:', error);
       res.status(500).json({ error: 'Failed to fetch submissions' });
     }
   }
@@ -393,9 +405,9 @@ router.get(
   authorize(Role.STUDENT),
   async (req: Request, res: Response) => {
     try {
-      const studentId = req.user!._id;
+      const studentId = req.user!.id;
 
-      const submissions = await ExamSubmission.find({ studentId })
+      const submissions = await ExamSubmission.find({ studentId: new mongoose.Types.ObjectId(studentId) })
         .populate({
           path: 'examId',
           select: 'title type courseId settings',
@@ -405,13 +417,13 @@ router.get(
 
       res.json(submissions);
     } catch (error) {
-      console.error('Error fetching submissions:', error);
+      logger.error('Error fetching submissions:', error);
       res.status(500).json({ error: 'Failed to fetch submissions' });
     }
   }
 );
 
-// Grade answer (faculty)
+// Grade answer (faculty) - FIXED VERSION
 router.put(
   '/:submissionId/grade/:questionId',
   authenticate,
@@ -420,15 +432,24 @@ router.put(
     try {
       const { submissionId, questionId } = req.params;
       const { pointsEarned, feedback } = req.body;
-      const graderId = req.user!._id;
+      const graderId = req.user!.id;
+
+      logger.info(`Grading attempt - Submission: ${submissionId}, Question: ${questionId}, Points: ${pointsEarned}`);
+
+      // Validate input
+      if (pointsEarned === undefined || pointsEarned === null) {
+        return res.status(400).json({ error: 'Points earned is required' });
+      }
 
       const submission = await ExamSubmission.findById(submissionId);
       if (!submission) {
+        logger.error(`Submission not found: ${submissionId}`);
         return res.status(404).json({ error: 'Submission not found' });
       }
 
       const question = await Question.findById(questionId);
       if (!question) {
+        logger.error(`Question not found: ${questionId}`);
         return res.status(404).json({ error: 'Question not found' });
       }
 
@@ -438,19 +459,25 @@ router.put(
       );
 
       if (answerIndex < 0) {
+        logger.error(`Answer not found for question: ${questionId}`);
         return res.status(404).json({ error: 'Answer not found' });
       }
 
-      const oldPoints = submission.answers[answerIndex].pointsEarned;
+      const oldPoints = submission.answers[answerIndex].pointsEarned || 0;
       
-      submission.answers[answerIndex].pointsEarned = Math.min(pointsEarned, question.points);
-      submission.answers[answerIndex].feedback = feedback;
+      // Cap points at question max
+      const cappedPoints = Math.min(Math.max(0, pointsEarned), question.points);
+      
+      // Update the answer
+      submission.answers[answerIndex].pointsEarned = cappedPoints;
+      submission.answers[answerIndex].feedback = feedback || '';
       submission.answers[answerIndex].gradedAt = new Date();
-      submission.answers[answerIndex].gradedById = graderId;
+      submission.answers[answerIndex].gradedById = new mongoose.Types.ObjectId(graderId);
 
       // Update total score
-      submission.totalScore = submission.totalScore - oldPoints + submission.answers[answerIndex].pointsEarned;
+      submission.totalScore = submission.totalScore - oldPoints + cappedPoints;
       
+      // Recalculate percentage
       const exam = await Exam.findById(submission.examId);
       if (exam) {
         submission.percentage = exam.totalPoints > 0
@@ -461,21 +488,29 @@ router.put(
 
       // Check if all questions are graded
       const allGraded = submission.answers.every((a) => a.gradedAt || a.isCorrect !== undefined);
-      if (allGraded) {
+      if (allGraded && submission.status === SubmissionStatus.SUBMITTED) {
         submission.status = SubmissionStatus.GRADED;
       }
 
+      // Mark as modified to ensure Mongoose saves it
+      submission.markModified('answers');
+      submission.markModified('totalScore');
+      submission.markModified('percentage');
+      submission.markModified('status');
+
       await submission.save();
+
+      logger.info(`Successfully graded - New score: ${submission.totalScore}, Status: ${submission.status}`);
 
       res.json(submission);
     } catch (error) {
-      console.error('Error grading answer:', error);
-      res.status(500).json({ error: 'Failed to grade answer' });
+      logger.error('Error grading answer:', error);
+      res.status(500).json({ error: 'Failed to grade answer', details: error instanceof Error ? error.message : 'Unknown error' });
     }
   }
 );
 
-// Return graded exam to student
+// Return graded exam to student - FIXED VERSION
 router.post(
   '/:submissionId/return',
   authenticate,
@@ -485,34 +520,44 @@ router.post(
       const { submissionId } = req.params;
       const { overallFeedback } = req.body;
 
+      logger.info(`Returning submission: ${submissionId}`);
+
       const submission = await ExamSubmission.findById(submissionId)
-        .populate('studentId', 'firstName lastName');
+        .populate('studentId', 'firstName lastName email');
 
       if (!submission) {
+        logger.error(`Submission not found: ${submissionId}`);
         return res.status(404).json({ error: 'Submission not found' });
       }
 
+      // Update status
       submission.status = SubmissionStatus.RETURNED;
       if (overallFeedback) {
         submission.overallFeedback = overallFeedback;
       }
 
+      // Mark as modified
+      submission.markModified('status');
+      submission.markModified('overallFeedback');
+
       await submission.save();
+
+      logger.info(`Successfully returned submission: ${submissionId}, Status: ${submission.status}`);
 
       // Notify student
       const exam = await Exam.findById(submission.examId);
       await Notification.create({
         userId: submission.studentId._id,
-        type: 'RESULT',
+        type: NotificationType.RESULT_PUBLISHED,
         title: 'Exam Results Available',
         message: `Your results for "${exam?.title}" are now available.`,
-        link: `/submissions/${submissionId}`,
+        data: { submissionId: submission._id, examId: exam?._id },
       });
 
       res.json(submission);
     } catch (error) {
-      console.error('Error returning submission:', error);
-      res.status(500).json({ error: 'Failed to return submission' });
+      logger.error('Error returning submission:', error);
+      res.status(500).json({ error: 'Failed to return submission', details: error instanceof Error ? error.message : 'Unknown error' });
     }
   }
 );
@@ -526,29 +571,41 @@ router.post(
     try {
       const { examId } = req.params;
 
+      logger.info(`Bulk returning submissions for exam: ${examId}`);
+
       const result = await ExamSubmission.updateMany(
-        { examId, status: SubmissionStatus.GRADED },
-        { status: SubmissionStatus.RETURNED }
+        { examId: new mongoose.Types.ObjectId(examId), status: SubmissionStatus.GRADED },
+        { $set: { status: SubmissionStatus.RETURNED } }
       );
 
+      logger.info(`Bulk return result: ${result.modifiedCount} submissions updated`);
+
       // Get all affected submissions and notify students
-      const submissions = await ExamSubmission.find({ examId, status: SubmissionStatus.RETURNED });
+      const submissions = await ExamSubmission.find({ 
+        examId: new mongoose.Types.ObjectId(examId), 
+        status: SubmissionStatus.RETURNED 
+      });
+      
       const exam = await Exam.findById(examId);
 
       for (const submission of submissions) {
         await Notification.create({
           userId: submission.studentId,
-          type: 'RESULT',
+          type: NotificationType.RESULT_PUBLISHED,
           title: 'Exam Results Available',
           message: `Your results for "${exam?.title}" are now available.`,
-          link: `/submissions/${submission._id}`,
+          data: { submissionId: submission._id, examId: exam?._id },
         });
       }
 
-      res.json({ message: `${result.modifiedCount} submissions returned` });
+      res.json({ 
+        success: true,
+        message: `${result.modifiedCount} submissions returned`,
+        count: result.modifiedCount 
+      });
     } catch (error) {
-      console.error('Error returning submissions:', error);
-      res.status(500).json({ error: 'Failed to return submissions' });
+      logger.error('Error returning submissions:', error);
+      res.status(500).json({ error: 'Failed to return submissions', details: error instanceof Error ? error.message : 'Unknown error' });
     }
   }
 );
