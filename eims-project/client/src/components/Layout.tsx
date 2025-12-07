@@ -9,6 +9,7 @@ import {
   Megaphone, Users, Bell, LogOut, Menu, X, Wifi, WifiOff,
   User, Settings, ChevronDown,
 } from 'lucide-react';
+import IskorLogo from './Iskor.png';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -80,10 +81,11 @@ const Layout = ({ children }: LayoutProps) => {
       >
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
           <Link to="/dashboard" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">E</span>
-            </div>
-            <span className="font-bold text-lg text-gray-900">ExamFlow</span>
+            <img
+              src={IskorLogo}
+              alt="ISKOr Logo"
+              className="w-20 h-12 object-cover rounded-lg"
+            />
           </Link>
           <button
             className="lg:hidden p-2 text-gray-500 hover:text-gray-700"
