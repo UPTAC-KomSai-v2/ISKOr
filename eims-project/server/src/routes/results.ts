@@ -1,16 +1,17 @@
 import { Router, Request, Response } from 'express';
-import { ExamResult, ResultStatus, RegradeStatus, Exam, Enrollment, Role, EnrollmentStatus, NotificationType } from '../models';
+import { ExamResult, ResultStatus, RegradeStatus, Exam, Enrollment, Role, EnrollmentStatus, NotificationType, ExamSubmission, SubmissionStatus } from '../models';
 import { authenticate, authorize } from '../middleware/auth';
 import { createResultValidator, bulkResultValidator, regradeRequestValidator, regradeResponseValidator, mongoIdValidator, paginationValidator } from '../middleware/validation';
 import notificationService from '../services/notification';
 import wsService from '../services/websocket';
 import logger from '../utils/logger';
+import mongoose from 'mongoose';
 
 const router = Router();
 
 /**
  * GET /api/v1/results
- * List results with filters
+ * List results with filters - NOW INCLUDES SUBMISSIONS
  */
 router.get('/', authenticate, paginationValidator, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -20,14 +21,67 @@ router.get('/', authenticate, paginationValidator, async (req: Request, res: Res
 
     let filter: any = {};
 
-    // Students only see their own published results
+    // Students only see their own published results OR returned submissions
     if (req.user!.role === Role.STUDENT) {
-      filter.studentId = req.user!.id;
-      filter.status = ResultStatus.PUBLISHED;
+      // Get both ExamResults and ExamSubmissions
+      const [examResults, examSubmissions] = await Promise.all([
+        ExamResult.find({ studentId: new mongoose.Types.ObjectId(req.user!.id), status: ResultStatus.PUBLISHED })
+          .populate('examId', 'title type totalPoints passingScore courseId')
+          .populate('studentId', 'firstName lastName email studentNumber')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit),
+        ExamSubmission.find({ 
+          studentId: new mongoose.Types.ObjectId(req.user!.id), 
+          status: { $in: [SubmissionStatus.GRADED, SubmissionStatus.RETURNED] }
+        })
+          .populate('examId', 'title type totalPoints passingScore courseId')
+          .populate('studentId', 'firstName lastName email studentNumber')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+      ]);
+
+      // Combine and format results
+      const combinedResults = [
+        ...examResults.map(r => ({
+          _id: r._id,
+          examId: r.examId,
+          studentId: r.studentId,
+          score: r.score,
+          totalPoints: (r.examId as any).totalPoints,
+          percentage: ((r.score / (r.examId as any).totalPoints) * 100).toFixed(2),
+          status: r.status,
+          publishedAt: r.publishedAt,
+          createdAt: r.createdAt,
+          type: 'result'
+        })),
+        ...examSubmissions.map(s => ({
+          _id: s._id,
+          examId: s.examId,
+          studentId: s.studentId,
+          score: s.totalScore,
+          totalPoints: s.maxScore,
+          percentage: s.percentage,
+          status: s.status === SubmissionStatus.RETURNED ? 'PUBLISHED' : 'PENDING',
+          publishedAt: s.submittedAt,
+          createdAt: s.createdAt,
+          type: 'submission'
+        }))
+      ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      const total = combinedResults.length;
+
+      res.json({
+        success: true,
+        data: { results: combinedResults, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      });
+      return;
     }
 
-    if (req.query.examId) filter.examId = req.query.examId;
-    if (req.query.studentId && req.user!.role !== Role.STUDENT) filter.studentId = req.query.studentId;
+    // Faculty/Admin logic
+    if (req.query.examId) filter.examId = new mongoose.Types.ObjectId(req.query.examId as string);
+    if (req.query.studentId && req.user!.role !== Role.STUDENT) filter.studentId = new mongoose.Types.ObjectId(req.query.studentId as string);
     if (req.query.status && req.user!.role !== Role.STUDENT) filter.status = req.query.status;
 
     const [results, total] = await Promise.all([
@@ -52,27 +106,62 @@ router.get('/', authenticate, paginationValidator, async (req: Request, res: Res
 
 /**
  * GET /api/v1/results/exam/:examId
- * Get all results for an exam (Faculty/Admin)
+ * Get all results for an exam (Faculty/Admin) - NOW INCLUDES SUBMISSIONS
  */
 router.get('/exam/:examId', authenticate, authorize(Role.ADMIN, Role.FACULTY), async (req: Request, res: Response): Promise<void> => {
   try {
-    const results = await ExamResult.find({ examId: req.params.examId })
-      .populate('studentId', 'firstName lastName email studentNumber section')
-      .sort({ score: -1 });
+    const examId = new mongoose.Types.ObjectId(req.params.examId);
 
-    const exam = await Exam.findById(req.params.examId).select('title totalPoints passingScore');
+    // Get both ExamResults and ExamSubmissions
+    const [examResults, examSubmissions] = await Promise.all([
+      ExamResult.find({ examId })
+        .populate('studentId', 'firstName lastName email studentNumber section')
+        .sort({ score: -1 }),
+      ExamSubmission.find({ 
+        examId,
+        status: { $in: [SubmissionStatus.SUBMITTED, SubmissionStatus.GRADED, SubmissionStatus.RETURNED] }
+      })
+        .populate('studentId', 'firstName lastName email studentNumber section')
+        .sort({ totalScore: -1 })
+    ]);
 
-    // Calculate statistics
-    const scores = results.map(r => r.score);
+    const exam = await Exam.findById(examId).select('title totalPoints passingScore');
+
+    // Combine results
+    const combinedResults = [
+      ...examResults.map(r => ({
+        _id: r._id,
+        studentId: r.studentId,
+        score: r.score,
+        totalPoints: exam?.totalPoints || 0,
+        percentage: exam?.totalPoints ? ((r.score / exam.totalPoints) * 100).toFixed(2) : 0,
+        status: r.status,
+        publishedAt: r.publishedAt,
+        type: 'result'
+      })),
+      ...examSubmissions.map(s => ({
+        _id: s._id,
+        studentId: s.studentId,
+        score: s.totalScore,
+        totalPoints: s.maxScore,
+        percentage: s.percentage,
+        status: s.status,
+        publishedAt: s.submittedAt,
+        type: 'submission'
+      }))
+    ];
+
+    // Calculate statistics from combined data
+    const scores = combinedResults.map(r => Number(r.score));
     const stats = {
-      count: results.length,
+      count: combinedResults.length,
       average: scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : 0,
       highest: scores.length ? Math.max(...scores) : 0,
       lowest: scores.length ? Math.min(...scores) : 0,
-      passed: exam?.passingScore ? results.filter(r => r.score >= exam.passingScore!).length : 0,
+      passed: exam?.passingScore ? combinedResults.filter(r => Number(r.score) >= exam.passingScore!).length : 0,
     };
 
-    res.json({ success: true, data: { results, exam, stats } });
+    res.json({ success: true, data: { results: combinedResults, exam, stats } });
   } catch (error) {
     logger.error('Get exam results error:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch results' } });
@@ -81,29 +170,57 @@ router.get('/exam/:examId', authenticate, authorize(Role.ADMIN, Role.FACULTY), a
 
 /**
  * GET /api/v1/results/:id
- * Get result details
+ * Get result details - NOW CHECKS BOTH COLLECTIONS
  */
 router.get('/:id', authenticate, mongoIdValidator, async (req: Request, res: Response): Promise<void> => {
   try {
-    const result = await ExamResult.findById(req.params.id)
+    const resultId = new mongoose.Types.ObjectId(req.params.id);
+
+    // Try ExamResult first
+    let result = await ExamResult.findById(resultId)
       .populate('examId', 'title type totalPoints passingScore courseId')
       .populate('studentId', 'firstName lastName email studentNumber')
       .populate('regradeRequests.respondedById', 'firstName lastName');
 
+    let isSubmission = false;
+
+    // If not found, try ExamSubmission
     if (!result) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
-      return;
+      const submission = await ExamSubmission.findById(resultId)
+        .populate('examId', 'title type totalPoints passingScore courseId')
+        .populate('studentId', 'firstName lastName email studentNumber');
+
+      if (!submission) {
+        res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
+        return;
+      }
+
+      // Convert submission to result format
+      result = {
+        _id: submission._id,
+        examId: submission.examId,
+        studentId: submission.studentId,
+        score: submission.totalScore,
+        remarks: submission.overallFeedback,
+        status: submission.status === SubmissionStatus.RETURNED ? ResultStatus.PUBLISHED : ResultStatus.PENDING,
+        publishedAt: submission.submittedAt,
+        regradeRequests: [],
+        createdAt: submission.createdAt,
+        updatedAt: submission.updatedAt,
+      } as any;
+
+      isSubmission = true;
     }
 
     // Students can only see their own results
     if (req.user!.role === Role.STUDENT) {
-      if (result.studentId._id.toString() !== req.user!.id || result.status !== ResultStatus.PUBLISHED) {
+      if ((result.studentId as any)._id.toString() !== req.user!.id || result.status !== ResultStatus.PUBLISHED) {
         res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Access denied' } });
         return;
       }
     }
 
-    res.json({ success: true, data: { result } });
+    res.json({ success: true, data: { result, isSubmission } });
   } catch (error) {
     logger.error('Get result error:', error);
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch result' } });
@@ -126,20 +243,32 @@ router.post('/', authenticate, authorize(Role.ADMIN, Role.FACULTY), createResult
     }
 
     // Check if student is enrolled
-    const enrollment = await Enrollment.findOne({ studentId, courseId: exam.courseId, status: EnrollmentStatus.ENROLLED });
+    const enrollment = await Enrollment.findOne({ 
+      studentId: new mongoose.Types.ObjectId(studentId), 
+      courseId: exam.courseId, 
+      status: EnrollmentStatus.ENROLLED 
+    });
     if (!enrollment) {
       res.status(400).json({ success: false, error: { code: 'NOT_ENROLLED', message: 'Student not enrolled in this course' } });
       return;
     }
 
     // Check for existing result
-    const existing = await ExamResult.findOne({ examId, studentId });
+    const existing = await ExamResult.findOne({ 
+      examId: new mongoose.Types.ObjectId(examId), 
+      studentId: new mongoose.Types.ObjectId(studentId) 
+    });
     if (existing) {
       res.status(400).json({ success: false, error: { code: 'DUPLICATE', message: 'Result already exists for this student' } });
       return;
     }
 
-    const result = await ExamResult.create({ examId, studentId, score, remarks });
+    const result = await ExamResult.create({ 
+      examId: new mongoose.Types.ObjectId(examId), 
+      studentId: new mongoose.Types.ObjectId(studentId), 
+      score, 
+      remarks 
+    });
     await result.populate('studentId', 'firstName lastName studentNumber');
 
     res.status(201).json({ success: true, data: { result } });
@@ -166,7 +295,7 @@ router.post('/bulk', authenticate, authorize(Role.ADMIN, Role.FACULTY), bulkResu
     // Create results using upsert
     const operations = resultData.map((r: { studentId: string; score: number; remarks?: string }) => ({
       updateOne: {
-        filter: { examId, studentId: r.studentId },
+        filter: { examId: new mongoose.Types.ObjectId(examId), studentId: new mongoose.Types.ObjectId(r.studentId) },
         update: { $set: { score: r.score, remarks: r.remarks } },
         upsert: true,
       },
@@ -263,12 +392,12 @@ router.put('/publish-bulk', authenticate, authorize(Role.ADMIN, Role.FACULTY), a
     }
 
     await ExamResult.updateMany(
-      { _id: { $in: resultIds } },
+      { _id: { $in: resultIds.map(id => new mongoose.Types.ObjectId(id)) } },
       { status: ResultStatus.PUBLISHED, publishedAt: new Date() }
     );
 
     // Get updated results for notifications
-    const results = await ExamResult.find({ _id: { $in: resultIds } }).populate('examId', 'title');
+    const results = await ExamResult.find({ _id: { $in: resultIds.map(id => new mongoose.Types.ObjectId(id)) } }).populate('examId', 'title');
     
     for (const result of results) {
       await notificationService.notify(
@@ -341,53 +470,7 @@ router.post('/:id/regrade', authenticate, authorize(Role.STUDENT), regradeReques
   }
 });
 
-/**
- * PUT /api/v1/results/:id/regrade/:regradeId
- * Respond to a regrade request (Faculty/Admin)
- */
-router.put('/:id/regrade/:regradeId', authenticate, authorize(Role.ADMIN, Role.FACULTY), regradeResponseValidator, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { status, response, newScore } = req.body;
 
-    const result = await ExamResult.findById(req.params.id);
-    if (!result) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Result not found' } });
-      return;
-    }
-
-    const regrade = result.regradeRequests.id(req.params.regradeId);
-    if (!regrade) {
-      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Regrade request not found' } });
-      return;
-    }
-
-    regrade.status = status;
-    regrade.response = response;
-    regrade.respondedById = req.user!.id as any;
-    regrade.respondedAt = new Date();
-
-    // Update score if approved and new score provided
-    if (status === RegradeStatus.APPROVED && newScore !== undefined) {
-      result.score = newScore;
-    }
-
-    await result.save();
-
-    // Notify student
-    await notificationService.notify(
-      result.studentId.toString(),
-      NotificationType.REGRADE_RESPONSE,
-      `Regrade Request ${status}`,
-      response,
-      { resultId: result._id, status }
-    );
-
-    res.json({ success: true, data: { result } });
-  } catch (error) {
-    logger.error('Respond to regrade error:', error);
-    res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to respond to regrade' } });
-  }
-});
 
 /**
  * GET /api/v1/results/regrades/pending
