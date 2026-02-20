@@ -18,6 +18,9 @@ import NotificationsPage from '@/pages/NotificationsPage';
 import ProfilePage from '@/pages/ProfilePage';
 import ProfileSettingsPage from '@/pages/ProfileSettingsPage';
 import { Role } from '@/types';
+import TeacherInsightsPage from '@/pages/TeacherInsightsPage';
+import StudentInsightsPage from '@/pages/StudentInsightsPage';
+import CourseInsightsPage from '@/pages/CourseInsightsPage';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated } = useAuthStore();
@@ -62,6 +65,9 @@ function App() {
                   <Route path="/notifications" element={<NotificationsPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/profile/settings" element={<ProfileSettingsPage />} />
+                  <Route path="/exams/:examId/insights" element={<TeacherInsightsPage />} />
+                  <Route path="/my-performance" element={<StudentInsightsPage />} />
+                  <Route path="/courses/:courseId/insights" element={<CourseInsightsPage />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

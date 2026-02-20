@@ -4,7 +4,8 @@ import { examsApi, coursesApi } from '@/services/api';
 import api from '@/services/api';
 import { Exam, ExamStatus, ExamType, Course, Role } from '@/types';
 import Modal from '@/components/Modal';
-import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin, Eye, Play, Pause, Users, Loader2 } from 'lucide-react';
+import ExamScheduler, { ExamScheduleSettings } from '@/components/ExamScheduler';
+import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin, Eye, Play, Pause, Users, Loader2, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const ExamsPage = () => {
@@ -32,6 +33,20 @@ const ExamsPage = () => {
     passingScore: 60,
     guidelines: '',
   });
+  
+  // Schedule settings state
+  const [scheduleSettings, setScheduleSettings] = useState<ExamScheduleSettings>({
+    startDate: null,
+    endDate: null,
+    timeLimitMinutes: null,
+    autoSubmitOnTimeExpire: true,
+    showTimerWarning: true,
+    warningThresholdMinutes: 5,
+    lateSubmissionAllowed: false,
+    lateSubmissionPenalty: 0,
+    maxAttempts: 1,
+  });
+
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -72,6 +87,17 @@ const ExamsPage = () => {
       passingScore: 60,
       guidelines: '',
     });
+    setScheduleSettings({
+      startDate: null,
+      endDate: null,
+      timeLimitMinutes: null,
+      autoSubmitOnTimeExpire: true,
+      showTimerWarning: true,
+      warningThresholdMinutes: 5,
+      lateSubmissionAllowed: false,
+      lateSubmissionPenalty: 0,
+      maxAttempts: 1,
+    });
     setFormError('');
   };
 
@@ -81,7 +107,24 @@ const ExamsPage = () => {
     setFormError('');
 
     try {
-      await examsApi.create(formData);
+      // Combine form data with schedule settings
+      const examData = {
+        ...formData,
+        startDate: scheduleSettings.startDate ? new Date(scheduleSettings.startDate).toISOString() : undefined,
+        endDate: scheduleSettings.endDate ? new Date(scheduleSettings.endDate).toISOString() : undefined,
+        settings: {
+          timeLimitMinutes: scheduleSettings.timeLimitMinutes,
+          autoSubmitOnTimeExpire: scheduleSettings.autoSubmitOnTimeExpire,
+          showTimerWarning: scheduleSettings.showTimerWarning,
+          warningThresholdMinutes: scheduleSettings.warningThresholdMinutes,
+          lateSubmissionAllowed: scheduleSettings.lateSubmissionAllowed,
+          lateSubmissionPenalty: scheduleSettings.lateSubmissionPenalty,
+          maxAttempts: scheduleSettings.maxAttempts,
+          passingPercentage: formData.passingScore,
+        },
+      };
+
+      await examsApi.create(examData);
       setShowCreateModal(false);
       resetForm();
       fetchExams();
@@ -99,7 +142,24 @@ const ExamsPage = () => {
     setFormError('');
 
     try {
-      await examsApi.update(selectedExam._id, formData);
+      // Combine form data with schedule settings
+      const examData = {
+        ...formData,
+        startDate: scheduleSettings.startDate ? new Date(scheduleSettings.startDate).toISOString() : undefined,
+        endDate: scheduleSettings.endDate ? new Date(scheduleSettings.endDate).toISOString() : undefined,
+        settings: {
+          timeLimitMinutes: scheduleSettings.timeLimitMinutes,
+          autoSubmitOnTimeExpire: scheduleSettings.autoSubmitOnTimeExpire,
+          showTimerWarning: scheduleSettings.showTimerWarning,
+          warningThresholdMinutes: scheduleSettings.warningThresholdMinutes,
+          lateSubmissionAllowed: scheduleSettings.lateSubmissionAllowed,
+          lateSubmissionPenalty: scheduleSettings.lateSubmissionPenalty,
+          maxAttempts: scheduleSettings.maxAttempts,
+          passingPercentage: formData.passingScore,
+        },
+      };
+
+      await examsApi.update(selectedExam._id, examData);
       setShowEditModal(false);
       resetForm();
       fetchExams();
@@ -173,8 +233,28 @@ const ExamsPage = () => {
       passingScore: exam.settings?.passingPercentage || 60,
       guidelines: '',
     });
+    // Set schedule settings from exam
+    setScheduleSettings({
+      startDate: exam.startDate ? formatDateTimeLocal(exam.startDate) : null,
+      endDate: exam.endDate ? formatDateTimeLocal(exam.endDate) : null,
+      timeLimitMinutes: exam.settings?.timeLimitMinutes || null,
+      autoSubmitOnTimeExpire: exam.settings?.autoSubmitOnTimeExpire ?? true,
+      showTimerWarning: exam.settings?.showTimerWarning ?? true,
+      warningThresholdMinutes: exam.settings?.warningThresholdMinutes || 5,
+      lateSubmissionAllowed: exam.settings?.lateSubmissionAllowed ?? false,
+      lateSubmissionPenalty: exam.settings?.lateSubmissionPenalty || 0,
+      maxAttempts: exam.settings?.maxAttempts || 1,
+    });
     setShowEditModal(true);
   };
+
+  // Helper to format date for datetime-local input
+  function formatDateTimeLocal(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    const offset = d.getTimezoneOffset();
+    const localDate = new Date(d.getTime() - offset * 60 * 1000);
+    return localDate.toISOString().slice(0, 16);
+  }
 
   const openDeleteModal = (exam: Exam) => {
     setSelectedExam(exam);
@@ -280,11 +360,26 @@ const ExamsPage = () => {
                     {exam.description && (
                       <p className="text-sm text-gray-600 mt-1 line-clamp-2">{exam.description}</p>
                     )}
-                    {exam.questionCount !== undefined && (
-                      <p className="text-sm text-gray-500 mt-1">
-                        {exam.questionCount} question{exam.questionCount !== 1 ? 's' : ''}
-                      </p>
-                    )}
+                    <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-500">
+                      {exam.questionCount !== undefined && (
+                        <span>{exam.questionCount} question{exam.questionCount !== 1 ? 's' : ''}</span>
+                      )}
+                      {exam.settings?.timeLimitMinutes && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {exam.settings.timeLimitMinutes} min
+                        </span>
+                      )}
+                      {exam.settings?.maxAttempts && exam.settings.maxAttempts > 1 && (
+                        <span>{exam.settings.maxAttempts} attempts</span>
+                      )}
+                      {exam.startDate && (
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {formatDate(exam.startDate)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -369,6 +464,18 @@ const ExamsPage = () => {
                       </button>
                     )}
 
+                    {/* View Insights - for exams with submissions */}
+                    {['ACTIVE', 'CLOSED', 'GRADING', 'COMPLETED'].includes(exam.status) && (
+                      <button
+                        onClick={() => navigate(`/exams/${exam._id}/insights`)}
+                        className="btn btn-secondary text-sm py-1.5 flex items-center gap-1"
+                        title="View Insights"
+                      >
+                        <BarChart3 className="w-4 h-4" />
+                        Insights
+                      </button>
+                    )}
+
                     {/* Edit Button - only for drafts */}
                     {exam.status === 'DRAFT' && (
                       <button
@@ -399,61 +506,77 @@ const ExamsPage = () => {
       )}
 
       {/* Create Modal */}
-      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Exam">
-        <form onSubmit={handleCreate} className="space-y-4">
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Exam" size="lg">
+        <form onSubmit={handleCreate} className="space-y-6">
           {formError && (
             <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-            <input
-              type="text"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              className="input"
-              required
-            />
+          
+          {/* Basic Info Section */}
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Basic Information</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                className="input"
+                placeholder="e.g., Midterm Exam - Chapter 1-5"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
+                <select
+                  value={formData.courseId}
+                  onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
+                  className="input"
+                  required
+                >
+                  <option value="">Select a course</option>
+                  {courses.map((course) => (
+                    <option key={course._id} value={course._id}>
+                      {course.code} - {course.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={formData.type}
+                  onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
+                  className="input"
+                >
+                  <option value="QUIZ">Quiz</option>
+                  <option value="MIDTERM">Midterm</option>
+                  <option value="FINAL">Final</option>
+                  <option value="PRACTICAL">Practical</option>
+                  <option value="ASSIGNMENT">Assignment</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                className="input"
+                rows={2}
+                placeholder="Brief description of the exam..."
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
-            <select
-              value={formData.courseId}
-              onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
-              className="input"
-              required
-            >
-              <option value="">Select a course</option>
-              {courses.map((course) => (
-                <option key={course._id} value={course._id}>
-                  {course.code} - {course.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-            <select
-              value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
-              className="input"
-            >
-              <option value="QUIZ">Quiz</option>
-              <option value="MIDTERM">Midterm</option>
-              <option value="FINAL">Final</option>
-              <option value="PRACTICAL">Practical</option>
-              <option value="ASSIGNMENT">Assignment</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="input"
-              rows={3}
-            />
-          </div>
-          <div className="flex justify-end gap-3">
+
+          {/* Schedule & Timer Section */}
+          <ExamScheduler
+            initialValues={scheduleSettings}
+            onChange={setScheduleSettings}
+          />
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowCreateModal(false)} className="btn btn-secondary">
               Cancel
             </button>
@@ -465,61 +588,75 @@ const ExamsPage = () => {
       </Modal>
 
       {/* Edit Modal */}
-      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Exam">
-        <form onSubmit={handleEdit} className="space-y-4">
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Exam" size="lg">
+        <form onSubmit={handleEdit} className="space-y-6">
           {formError && (
             <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-            <input
-              type="text"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              className="input"
-              required
-            />
+          
+          {/* Basic Info Section */}  
+          <div className="space-y-4">
+            <h3 className="font-medium text-gray-900 border-b pb-2">Basic Information</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                className="input"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
+                <select
+                  value={formData.courseId}
+                  onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
+                  className="input"
+                  required
+                >
+                  <option value="">Select a course</option>
+                  {courses.map((course) => (
+                    <option key={course._id} value={course._id}>
+                      {course.code} - {course.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={formData.type}
+                  onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
+                  className="input"
+                >
+                  <option value="QUIZ">Quiz</option>
+                  <option value="MIDTERM">Midterm</option>
+                  <option value="FINAL">Final</option>
+                  <option value="PRACTICAL">Practical</option>
+                  <option value="ASSIGNMENT">Assignment</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                className="input"
+                rows={2}
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Course</label>
-            <select
-              value={formData.courseId}
-              onChange={(e) => setFormData({ ...formData, courseId: e.target.value })}
-              className="input"
-              required
-            >
-              <option value="">Select a course</option>
-              {courses.map((course) => (
-                <option key={course._id} value={course._id}>
-                  {course.code} - {course.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-            <select
-              value={formData.type}
-              onChange={(e) => setFormData({ ...formData, type: e.target.value as ExamType })}
-              className="input"
-            >
-              <option value="QUIZ">Quiz</option>
-              <option value="MIDTERM">Midterm</option>
-              <option value="FINAL">Final</option>
-              <option value="PRACTICAL">Practical</option>
-              <option value="ASSIGNMENT">Assignment</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="input"
-              rows={3}
-            />
-          </div>
-          <div className="flex justify-end gap-3">
+
+          {/* Schedule & Timer Section */}
+          <ExamScheduler
+            initialValues={scheduleSettings}
+            onChange={setScheduleSettings}
+          />
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowEditModal(false)} className="btn btn-secondary">
               Cancel
             </button>
@@ -589,6 +726,24 @@ const ExamsPage = () => {
                 <p className="text-sm text-gray-500">Passing Score</p>
                 <p className="font-medium">{selectedExam.settings?.passingPercentage || 60}%</p>
               </div>
+              {selectedExam.settings?.maxAttempts && (
+                <div>
+                  <p className="text-sm text-gray-500">Max Attempts</p>
+                  <p className="font-medium">{selectedExam.settings.maxAttempts}</p>
+                </div>
+              )}
+              {selectedExam.startDate && (
+                <div>
+                  <p className="text-sm text-gray-500">Start Date</p>
+                  <p className="font-medium">{formatDate(selectedExam.startDate)}</p>
+                </div>
+              )}
+              {selectedExam.endDate && (
+                <div>
+                  <p className="text-sm text-gray-500">End Date</p>
+                  <p className="font-medium">{formatDate(selectedExam.endDate)}</p>
+                </div>
+              )}
             </div>
             {selectedExam.description && (
               <div>

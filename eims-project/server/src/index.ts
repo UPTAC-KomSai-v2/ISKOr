@@ -11,6 +11,9 @@ import { wsService } from './services/websocket';
 import { auditMiddleware } from './middleware/audit';
 import logger from './utils/logger';
 
+import insightsRoutes from './routes/insights';
+import { initializeExamJobs } from './jobs/examScheduler';
+
 const app = express();
 const server = createServer(app);
 
@@ -24,6 +27,10 @@ mongoose
     logger.error('MongoDB connection error:', error);
     process.exit(1);
   });
+
+mongoose.connection.once('open', () => {
+  initializeExamJobs();
+});
 
 // Middleware
 app.use(helmet({
@@ -73,6 +80,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
     },
   });
 });
+
+app.use('/api/insights', insightsRoutes);
 
 // Initialize WebSocket
 wsService.initialize(server);

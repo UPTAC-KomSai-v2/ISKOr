@@ -3,10 +3,12 @@ import { useAuthStore } from '@/store/authStore';
 import { coursesApi, usersApi } from '@/services/api';
 import { Course, Role, User } from '@/types';
 import Modal from '@/components/Modal';
-import { Plus, Search, BookOpen, Users, Edit, Trash2, UserPlus, Eye } from 'lucide-react';
+import { Plus, Search, BookOpen, Users, Edit, Trash2, UserPlus, Eye, TrendingUp } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const CoursesPage = () => {
   const { user } = useAuthStore();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -257,6 +259,13 @@ const CoursesPage = () => {
                   >
                     <UserPlus className="w-4 h-4" />
                     Enroll
+                  </button>
+                  <button
+                    onClick={() => navigate(`/courses/${course._id}/insights`)}
+                    className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded"
+                    title="View Analytics"
+                  >
+                    <TrendingUp className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => openEditModal(course)}

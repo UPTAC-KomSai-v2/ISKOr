@@ -9,6 +9,8 @@ import resultRoutes from './results';
 import announcementRoutes from './announcements';
 import notificationRoutes from './notifications';
 import dashboardRoutes from './dashboard';
+import insightsRoutes from "./insights";
+
 
 const router = Router();
 
@@ -22,5 +24,7 @@ router.use('/results', resultRoutes);
 router.use('/announcements', announcementRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/dashboard', dashboardRoutes);
+router.use("/insights", insightsRoutes);
+
 
 export default router;
