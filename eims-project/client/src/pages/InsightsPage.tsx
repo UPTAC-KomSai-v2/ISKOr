@@ -157,7 +157,6 @@ const InsightsPage = () => {
           </button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Brain className="w-7 h-7 text-rose-600" />
               Insights Dashboard
             </h1>
             <p className="text-gray-500">Comprehensive analytics and performance metrics</p>

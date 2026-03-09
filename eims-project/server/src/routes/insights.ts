@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { Role } from '../models/User';
-import { Exam, ExamSubmission, Question, Course, Enrollment, EnrollmentStatus, User } from '../models';
+import { Exam, ExamSubmission, Question, Course, Enrollment, EnrollmentStatus, User, SubmissionStatus } from '../models';
 import logger from '../utils/logger';
 import mongoose from 'mongoose';
 
@@ -703,6 +703,179 @@ router.get('/comprehensive', authenticate, async (req: Request, res: Response): 
     res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch insights' } });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THIS to your insights router (server/src/routes/insights.ts)
+// Place it BEFORE the my-performance route to avoid route conflicts.
+//
+// This allows faculty/admin to view any student's full performance data
+// using the same data shape as /insights/my-performance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/insights/student/:studentId
+ * Faculty/Admin view of a specific student's performance
+ */
+router.get(
+  '/student/:studentId',
+  authenticate,
+  authorize(Role.ADMIN, Role.FACULTY),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { studentId } = req.params;
+
+      if (!mongoose.Types.ObjectId.isValid(studentId)) {
+        res.status(400).json({ success: false, error: { message: 'Invalid student ID' } });
+        return;
+      }
+
+      // Verify student exists
+      const student = await User.findById(studentId).select(
+        'firstName lastName email studentNumber section program yearLevel role'
+      );
+      if (!student || student.role !== Role.STUDENT) {
+        res.status(404).json({ success: false, error: { message: 'Student not found' } });
+        return;
+      }
+
+      // ── Re-use the same logic as my-performance but for the target student ──
+      const studentObjId = new mongoose.Types.ObjectId(studentId);
+
+      const submissions = await ExamSubmission.find({
+        studentId: studentObjId,
+        status: { $in: [SubmissionStatus.GRADED, SubmissionStatus.RETURNED] },
+      })
+        .populate({ path: 'examId', select: 'title type totalPoints settings courseId' })
+        .sort({ submittedAt: -1 });
+
+      if (submissions.length === 0) {
+        res.json({
+          success: true,
+          data: {
+            student,
+            statistics: {
+              totalExams: 0,
+              averageScore: 0,
+              highestScore: 0,
+              lowestScore: 0,
+              medianScore: 0,
+              passingRate: 0,
+              percentileRank: 0,
+              comparedToClass: 0,
+            },
+            typePerformance: [],
+            submissions: [],
+            recentExams: [],
+          },
+        });
+        return;
+      }
+
+      // ── Statistics ────────────────────────────────────────────────────────
+      const percentages = submissions.map((s) => s.percentage);
+      const sorted = [...percentages].sort((a, b) => a - b);
+      const avg = percentages.reduce((a, b) => a + b, 0) / percentages.length;
+      const median =
+        sorted.length % 2 === 0
+          ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+          : sorted[Math.floor(sorted.length / 2)];
+      const passing = submissions.filter((s) => s.isPassing).length;
+
+      // Class average — all students who took the same exams
+      const examIds = submissions.map((s) => (s.examId as any)._id);
+      const classSubmissions = await ExamSubmission.find({
+        examId: { $in: examIds },
+        status: { $in: [SubmissionStatus.GRADED, SubmissionStatus.RETURNED] },
+      }).select('percentage studentId');
+
+      const classPercentages = classSubmissions.map((s) => s.percentage);
+      const classAvg = classPercentages.length
+        ? classPercentages.reduce((a, b) => a + b, 0) / classPercentages.length
+        : avg;
+
+      // Percentile rank
+      const uniqueStudentAvgs: Record<string, number[]> = {};
+      for (const s of classSubmissions) {
+        const sid = s.studentId.toString();
+        if (!uniqueStudentAvgs[sid]) uniqueStudentAvgs[sid] = [];
+        uniqueStudentAvgs[sid].push(s.percentage);
+      }
+      const allStudentAvgs = Object.values(uniqueStudentAvgs).map(
+        (arr) => arr.reduce((a, b) => a + b, 0) / arr.length
+      );
+      const belowCount = allStudentAvgs.filter((a) => a < avg).length;
+      const percentileRank =
+        allStudentAvgs.length > 1
+          ? Math.round((belowCount / (allStudentAvgs.length - 1)) * 100)
+          : 100;
+
+      // ── Performance by question type ──────────────────────────────────────
+      const allAnswers = submissions.flatMap((s) => s.answers);
+      const submissionIds = submissions.map((s) => s._id);
+      const questions = await Question.find({
+        examId: { $in: examIds },
+      }).select('_id type');
+      const questionTypeMap = new Map(questions.map((q) => [q._id.toString(), q.type]));
+
+      const typeStats: Record<string, { correct: number; total: number }> = {};
+      for (const answer of allAnswers) {
+        const qType = questionTypeMap.get(answer.questionId.toString());
+        if (!qType) continue;
+        if (!typeStats[qType]) typeStats[qType] = { correct: 0, total: 0 };
+        typeStats[qType].total++;
+        if (answer.isCorrect) typeStats[qType].correct++;
+      }
+
+      const typePerformance = Object.entries(typeStats).map(([type, stats]) => ({
+        type,
+        accuracy: Math.round((stats.correct / stats.total) * 100),
+        totalQuestions: stats.total,
+        correctAnswers: stats.correct,
+      }));
+
+      // ── Shape submissions for frontend ────────────────────────────────────
+      const formattedSubmissions = submissions.map((s) => ({
+        _id: s._id,
+        exam: {
+          _id: (s.examId as any)._id,
+          title: (s.examId as any).title,
+          type: (s.examId as any).type,
+        },
+        score: s.totalScore,
+        maxScore: s.maxScore,
+        percentage: s.percentage,
+        isPassing: s.isPassing,
+        submittedAt: s.submittedAt,
+      }));
+
+      res.json({
+        success: true,
+        data: {
+          student,
+          statistics: {
+            totalExams: submissions.length,
+            averageScore: Math.round(avg),
+            highestScore: Math.round(Math.max(...percentages)),
+            lowestScore: Math.round(Math.min(...percentages)),
+            medianScore: Math.round(median),
+            passingRate: Math.round((passing / submissions.length) * 100),
+            percentileRank,
+            comparedToClass: Math.round(avg - classAvg),
+          },
+          typePerformance,
+          submissions: formattedSubmissions,
+          recentExams: formattedSubmissions.slice(0, 5),
+        },
+      });
+    } catch (error) {
+      logger.error('Get student performance error:', error);
+      res.status(500).json({
+        success: false,
+        error: { message: 'Failed to load student performance data' },
+      });
+    }
+  }
+);
 
 /**
  * GET /api/v1/insights/my-performance

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useAuthStore } from '@/store/authStore';
 import api from '@/services/api';
+import { Role } from '@/types';
 import {
   ArrowLeft,
   TrendingUp,
@@ -108,22 +110,43 @@ const EXAM_TYPE_COLORS: Record<string, string> = {
 
 const StudentInsightsPage = () => {
   const navigate = useNavigate();
+  // ── studentId is present when a faculty/admin navigates to /insights/student/:studentId
+  const { studentId } = useParams<{ studentId?: string }>();
+  const { user } = useAuthStore();
+
   const [data, setData] = useState<PerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // True when a faculty/admin is viewing someone else's page
+  const isFacultyViewing =
+    (user?.role === Role.FACULTY || user?.role === Role.ADMIN) && !!studentId;
+
   useEffect(() => {
     fetchPerformance();
-  }, []);
+  }, [studentId]);
 
   const fetchPerformance = async () => {
     try {
       setLoading(true);
       setError('');
-      const res = await api.get('/insights/my-performance');
+
+      let res;
+      if (isFacultyViewing) {
+        // Faculty/Admin → call the dedicated endpoint that accepts a student ID
+        res = await api.get(`/insights/student/${studentId}`);
+      } else {
+        // Student → fetch their own performance
+        res = await api.get('/insights/my-performance');
+      }
+
       setData(res.data.data);
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || err.response?.data?.error || 'Failed to load performance data');
+      setError(
+        err.response?.data?.error?.message ||
+          err.response?.data?.error ||
+          'Failed to load performance data'
+      );
     } finally {
       setLoading(false);
     }
@@ -133,7 +156,7 @@ const StudentInsightsPage = () => {
     return new Date(date).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: 'numeric',
     });
   };
 
@@ -152,6 +175,12 @@ const StudentInsightsPage = () => {
           <XCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
           <h3 className="text-lg font-semibold text-red-800">Student Not Found</h3>
           <p className="text-red-600 mt-1">{error}</p>
+          <button
+            onClick={() => navigate(-1)}
+            className="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+          >
+            Go Back
+          </button>
         </div>
       </div>
     );
@@ -161,32 +190,21 @@ const StudentInsightsPage = () => {
 
   const { student, statistics, typePerformance, submissions } = data;
 
-  // Prepare chart data
-  const scoreHistory = [...submissions]
-    .reverse()
-    .map((sub, index) => ({
-      exam: sub.exam.title.length > 12 ? sub.exam.title.substring(0, 12) + '...' : sub.exam.title,
-      score: sub.percentage,
-      passing: sub.isPassing ? 100 : 0,
-      index: index + 1
-    }));
-
-  const radarData = typePerformance.map(tp => ({
-    type: TYPE_LABELS[tp.type] || tp.type,
-    accuracy: tp.accuracy,
-    fullMark: 100
+  // ── Chart data ──────────────────────────────────────────────
+  const scoreHistory = [...submissions].reverse().map((sub, index) => ({
+    exam:
+      sub.exam.title.length > 12
+        ? sub.exam.title.substring(0, 12) + '...'
+        : sub.exam.title,
+    score: sub.percentage,
+    passing: sub.isPassing ? 100 : 0,
+    index: index + 1,
   }));
 
-  const examTypeDistribution = submissions.reduce((acc: Record<string, number>, sub) => {
-    const type = sub.exam.type;
-    acc[type] = (acc[type] || 0) + 1;
-    return acc;
-  }, {});
-
-  const examTypeData = Object.entries(examTypeDistribution).map(([type, count]) => ({
-    type: type.replace('_', ' '),
-    count,
-    color: EXAM_TYPE_COLORS[type] || '#6b7280'
+  const radarData = typePerformance.map((tp) => ({
+    type: TYPE_LABELS[tp.type] || tp.type,
+    accuracy: tp.accuracy,
+    fullMark: 100,
   }));
 
   return (
@@ -200,15 +218,30 @@ const StudentInsightsPage = () => {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back
         </button>
+
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white text-xl font-bold shadow-lg">
-            {student.firstName.charAt(0)}{student.lastName.charAt(0)}
+            {student.firstName.charAt(0)}
+            {student.lastName.charAt(0)}
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">My Performance</h1>
-            <p className="text-gray-600">{student.firstName} {student.lastName}</p>
+            {/* ── Title changes based on who is viewing ── */}
+            <h1 className="text-2xl font-bold text-gray-900">
+              {isFacultyViewing
+                ? `${student.firstName} ${student.lastName}'s Performance`
+                : 'My Performance'}
+            </h1>
+            <p className="text-gray-600">
+              {student.firstName} {student.lastName}
+            </p>
             {student.studentNumber && (
               <p className="text-sm text-gray-500">{student.studentNumber}</p>
+            )}
+            {isFacultyViewing && student.section && (
+              <p className="text-sm text-gray-400">
+                Section {student.section}
+                {student.program ? ` · ${student.program}` : ''}
+              </p>
             )}
           </div>
         </div>
@@ -219,7 +252,11 @@ const StudentInsightsPage = () => {
         <div className="bg-white rounded-xl p-8 text-center shadow-sm border border-gray-100">
           <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-700">No Exam Results Yet</h3>
-          <p className="text-gray-500 mt-2">Your performance data will appear here once you complete and have exams graded.</p>
+          <p className="text-gray-500 mt-2">
+            {isFacultyViewing
+              ? 'This student has not completed any graded exams yet.'
+              : 'Your performance data will appear here once you complete and have exams graded.'}
+          </p>
         </div>
       ) : (
         <>
@@ -229,7 +266,9 @@ const StudentInsightsPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Exams Taken</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{statistics.totalExams}</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {statistics.totalExams}
+                  </p>
                 </div>
                 <div className="p-3 bg-blue-50 rounded-lg">
                   <FileText className="w-5 h-5 text-blue-600" />
@@ -241,16 +280,23 @@ const StudentInsightsPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Average Score</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{statistics.averageScore}%</p>
-                  <p className={`text-xs mt-1 flex items-center gap-1 ${
-                    statistics.comparedToClass >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {statistics.averageScore}%
+                  </p>
+                  <p
+                    className={`text-xs mt-1 flex items-center gap-1 ${
+                      statistics.comparedToClass >= 0
+                        ? 'text-green-600'
+                        : 'text-red-600'
+                    }`}
+                  >
                     {statistics.comparedToClass >= 0 ? (
                       <TrendingUp className="w-3 h-3" />
                     ) : (
                       <TrendingDown className="w-3 h-3" />
                     )}
-                    {statistics.comparedToClass >= 0 ? '+' : ''}{statistics.comparedToClass}% vs class
+                    {statistics.comparedToClass >= 0 ? '+' : ''}
+                    {statistics.comparedToClass}% vs class
                   </p>
                 </div>
                 <div className="p-3 bg-emerald-50 rounded-lg">
@@ -263,9 +309,15 @@ const StudentInsightsPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Passing Rate</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{statistics.passingRate}%</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {statistics.passingRate}%
+                  </p>
                 </div>
-                <div className={`p-3 rounded-lg ${statistics.passingRate >= 70 ? 'bg-green-50' : 'bg-red-50'}`}>
+                <div
+                  className={`p-3 rounded-lg ${
+                    statistics.passingRate >= 70 ? 'bg-green-50' : 'bg-red-50'
+                  }`}
+                >
                   {statistics.passingRate >= 70 ? (
                     <CheckCircle className="w-5 h-5 text-green-600" />
                   ) : (
@@ -279,8 +331,12 @@ const StudentInsightsPage = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-500 font-medium">Percentile Rank</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{statistics.percentileRank}%</p>
-                  <p className="text-xs text-gray-500 mt-1">Top {100 - statistics.percentileRank}%</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-1">
+                    {statistics.percentileRank}%
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Top {100 - statistics.percentileRank}%
+                  </p>
                 </div>
                 <div className="p-3 bg-purple-50 rounded-lg">
                   <Trophy className="w-5 h-5 text-purple-600" />
@@ -295,16 +351,22 @@ const StudentInsightsPage = () => {
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <div className="flex justify-between text-sm mb-1">
-                  <span className="text-red-600 font-medium">Lowest: {statistics.lowestScore}%</span>
-                  <span className="text-gray-500">Median: {statistics.medianScore}%</span>
-                  <span className="text-green-600 font-medium">Highest: {statistics.highestScore}%</span>
+                  <span className="text-red-600 font-medium">
+                    Lowest: {statistics.lowestScore}%
+                  </span>
+                  <span className="text-gray-500">
+                    Median: {statistics.medianScore}%
+                  </span>
+                  <span className="text-green-600 font-medium">
+                    Highest: {statistics.highestScore}%
+                  </span>
                 </div>
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden relative">
-                  <div 
+                  <div
                     className="absolute h-full bg-gradient-to-r from-red-400 via-yellow-400 to-green-400"
-                    style={{ 
+                    style={{
                       left: `${statistics.lowestScore}%`,
-                      width: `${statistics.highestScore - statistics.lowestScore}%`
+                      width: `${statistics.highestScore - statistics.lowestScore}%`,
                     }}
                   />
                   <div
@@ -317,7 +379,7 @@ const StudentInsightsPage = () => {
             </div>
           </div>
 
-          {/* Charts Row */}
+          {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             {/* Score History */}
             <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
@@ -329,16 +391,22 @@ const StudentInsightsPage = () => {
                 <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={scoreHistory}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="exam" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={60} />
+                    <XAxis
+                      dataKey="exam"
+                      tick={{ fontSize: 11 }}
+                      angle={-45}
+                      textAnchor="end"
+                      height={60}
+                    />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
                       formatter={(value: number) => [`${value}%`, 'Score']}
                     />
-                    <Line 
-                      type="monotone" 
-                      dataKey="score" 
-                      stroke="#3b82f6" 
+                    <Line
+                      type="monotone"
+                      dataKey="score"
+                      stroke="#3b82f6"
                       strokeWidth={2}
                       dot={{ fill: '#3b82f6', r: 4 }}
                       activeDot={{ r: 6 }}
@@ -363,7 +431,11 @@ const StudentInsightsPage = () => {
                   <RadarChart data={radarData}>
                     <PolarGrid stroke="#e5e7eb" />
                     <PolarAngleAxis dataKey="type" tick={{ fontSize: 11 }} />
-                    <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 10 }} />
+                    <PolarRadiusAxis
+                      angle={90}
+                      domain={[0, 100]}
+                      tick={{ fontSize: 10 }}
+                    />
                     <Radar
                       name="Accuracy"
                       dataKey="accuracy"
@@ -371,7 +443,9 @@ const StudentInsightsPage = () => {
                       fill="#10b981"
                       fillOpacity={0.3}
                     />
-                    <Tooltip formatter={(value: number) => [`${value}%`, 'Accuracy']} />
+                    <Tooltip
+                      formatter={(value: number) => [`${value}%`, 'Accuracy']}
+                    />
                   </RadarChart>
                 </ResponsiveContainer>
               ) : (
@@ -385,17 +459,25 @@ const StudentInsightsPage = () => {
           {/* Type Performance Details */}
           {typePerformance.length > 0 && (
             <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 mb-8">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Question Type Breakdown</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Question Type Breakdown
+              </h3>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {typePerformance.map((tp) => (
                   <div key={tp.type} className="bg-gray-50 rounded-lg p-4">
-                    <p className="text-sm text-gray-500 font-medium">{TYPE_LABELS[tp.type] || tp.type}</p>
+                    <p className="text-sm text-gray-500 font-medium">
+                      {TYPE_LABELS[tp.type] || tp.type}
+                    </p>
                     <div className="flex items-end justify-between mt-2">
-                      <p className={`text-2xl font-bold ${
-                        tp.accuracy >= 80 ? 'text-green-600' :
-                        tp.accuracy >= 60 ? 'text-yellow-600' :
-                        'text-red-600'
-                      }`}>
+                      <p
+                        className={`text-2xl font-bold ${
+                          tp.accuracy >= 80
+                            ? 'text-green-600'
+                            : tp.accuracy >= 60
+                            ? 'text-yellow-600'
+                            : 'text-red-600'
+                        }`}
+                      >
                         {tp.accuracy}%
                       </p>
                       <p className="text-xs text-gray-500">
@@ -405,9 +487,11 @@ const StudentInsightsPage = () => {
                     <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full ${
-                          tp.accuracy >= 80 ? 'bg-green-500' :
-                          tp.accuracy >= 60 ? 'bg-yellow-500' :
-                          'bg-red-500'
+                          tp.accuracy >= 80
+                            ? 'bg-green-500'
+                            : tp.accuracy >= 60
+                            ? 'bg-yellow-500'
+                            : 'bg-red-500'
                         }`}
                         style={{ width: `${tp.accuracy}%` }}
                       />
@@ -430,11 +514,21 @@ const StudentInsightsPage = () => {
               <table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Exam</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Type</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Score</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Exam
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      Type
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      Score
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      Date
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -445,27 +539,36 @@ const StudentInsightsPage = () => {
                           <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
                             {sub.exam.title.substring(0, 2).toUpperCase()}
                           </div>
-                          <span className="font-medium text-gray-900">{sub.exam.title}</span>
+                          <span className="font-medium text-gray-900">
+                            {sub.exam.title}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <span 
+                        <span
                           className="px-2 py-1 text-xs font-medium rounded-full"
-                          style={{ 
-                            backgroundColor: `${EXAM_TYPE_COLORS[sub.exam.type] || '#6b7280'}20`,
-                            color: EXAM_TYPE_COLORS[sub.exam.type] || '#6b7280'
+                          style={{
+                            backgroundColor: `${
+                              EXAM_TYPE_COLORS[sub.exam.type] || '#6b7280'
+                            }20`,
+                            color: EXAM_TYPE_COLORS[sub.exam.type] || '#6b7280',
                           }}
                         >
                           {sub.exam.type.replace('_', ' ')}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <span className={`font-semibold ${
-                          sub.percentage >= 90 ? 'text-green-600' :
-                          sub.percentage >= 75 ? 'text-blue-600' :
-                          sub.percentage >= 60 ? 'text-yellow-600' :
-                          'text-red-600'
-                        }`}>
+                        <span
+                          className={`font-semibold ${
+                            sub.percentage >= 90
+                              ? 'text-green-600'
+                              : sub.percentage >= 75
+                              ? 'text-blue-600'
+                              : sub.percentage >= 60
+                              ? 'text-yellow-600'
+                              : 'text-red-600'
+                          }`}
+                        >
                           {sub.percentage}%
                         </span>
                         <span className="text-gray-400 text-sm ml-1">

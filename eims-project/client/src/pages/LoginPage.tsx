@@ -136,29 +136,13 @@ const LoginPage = () => {
 
             {/* Demo credentials */}
             <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="text-sm text-gray-500 text-center mb-3">Demo Credentials</p>
-              <div className="flex gap-2">
-                {[
-                  { label: 'Admin', email: 'admin@up.edu.ph' },
-                  { label: 'Faculty', email: 'faculty@up.edu.ph' },
-                  { label: 'Student', email: 'student@up.edu.ph' },
-                ].map((cred) => (
-                  <button
-                    key={cred.email}
-                    type="button"
-                    onClick={() => fillCredentials(cred.email)}
-                    className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium text-gray-700"
-                  >
-                    {cred.label}
-                  </button>
-                ))}
-              </div>
+              <p></p>
             </div>
           </div>
 
           {/* Footer text */}
           <p className="text-center text-sm text-white/90 mt-6 drop-shadow-md">
-            CMSC 135 • Data Communication and Networking
+            
           </p>
         </div>
       </div>
