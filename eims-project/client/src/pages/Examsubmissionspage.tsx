@@ -83,6 +83,11 @@ interface Statistics {
   lowestScore: number;
   passingCount: number;
   passingRate: number;
+  highestScorer?: {
+    name: string;
+    studentNumber?: string;
+    score: number;
+  };
 }
 
 const ExamSubmissionsPage = () => {
@@ -263,38 +268,74 @@ const ExamSubmissionsPage = () => {
             <p className="text-gray-500">{exam?.courseId?.code} • Submissions</p>
           </div>
         </div>
-        <button onClick={handleReturnAll} className="btn btn-primary flex items-center gap-2">
-          <Send className="w-4 h-4" />
-          Return All Graded
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => navigate(`/exams/${examId}/item-analysis`)} 
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Item Analysis
+          </button>
+          <button onClick={handleReturnAll} className="btn btn-primary flex items-center gap-2">
+            <Send className="w-4 h-4" />
+            Return All Graded
+          </button>
+        </div>
       </div>
 
       {/* Statistics */}
       {statistics && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-gray-900">{statistics.totalSubmissions}</p>
-            <p className="text-sm text-gray-500">Total</p>
-          </div>
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-blue-600">{statistics.averageScore}%</p>
-            <p className="text-sm text-gray-500">Average</p>
-          </div>
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-green-600">{statistics.highestScore}%</p>
-            <p className="text-sm text-gray-500">Highest</p>
-          </div>
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-red-600">{statistics.lowestScore}%</p>
-            <p className="text-sm text-gray-500">Lowest</p>
-          </div>
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-green-600">{statistics.passingCount}</p>
-            <p className="text-sm text-gray-500">Passed</p>
-          </div>
-          <div className="card p-4 text-center">
-            <p className="text-2xl font-bold text-purple-600">{statistics.passingRate}%</p>
-            <p className="text-sm text-gray-500">Pass Rate</p>
+        <div className="space-y-4">
+          {/* Highest Scorer Highlight */}
+          {statistics.highestScorer && (
+            <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-yellow-500 rounded-full flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm text-yellow-700 font-medium">🏆 Top Scorer</p>
+                  <p className="font-bold text-gray-900">{statistics.highestScorer.name}</p>
+                  {statistics.highestScorer.studentNumber && (
+                    <p className="text-xs text-gray-500">{statistics.highestScorer.studentNumber}</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-3xl font-bold text-green-600">{statistics.highestScorer.score}%</p>
+                <p className="text-xs text-gray-500">Highest Score</p>
+              </div>
+            </div>
+          )}
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-gray-900">{statistics.totalSubmissions}</p>
+              <p className="text-sm text-gray-500">Total</p>
+            </div>
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-blue-600">{statistics.averageScore}%</p>
+              <p className="text-sm text-gray-500">Average</p>
+            </div>
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-green-600">{statistics.highestScore}%</p>
+              <p className="text-sm text-gray-500">Highest</p>
+            </div>
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-red-600">{statistics.lowestScore}%</p>
+              <p className="text-sm text-gray-500">Lowest</p>
+            </div>
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-green-600">{statistics.passingCount}</p>
+              <p className="text-sm text-gray-500">Passed</p>
+            </div>
+            <div className="card p-4 text-center">
+              <p className="text-2xl font-bold text-purple-600">{statistics.passingRate}%</p>
+              <p className="text-sm text-gray-500">Pass Rate</p>
+            </div>
           </div>
         </div>
       )}

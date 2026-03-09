@@ -18,13 +18,37 @@ import NotificationsPage from '@/pages/NotificationsPage';
 import ProfilePage from '@/pages/ProfilePage';
 import ProfileSettingsPage from '@/pages/ProfileSettingsPage';
 import { Role } from '@/types';
+
+// Insights Pages
 import TeacherInsightsPage from '@/pages/TeacherInsightsPage';
 import StudentInsightsPage from '@/pages/StudentInsightsPage';
 import CourseInsightsPage from '@/pages/CourseInsightsPage';
 
+// NEW: Comprehensive Insights Pages
+import InsightsPage from '@/pages/InsightsPage';
+import ItemAnalysisPage from '@/pages/ItemAnalysisPage';
+import StudentDetailInsightsPage from '@/pages/StudentInsightsPage'; // Renamed to avoid conflict
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+};
+
+// Role-based protected route
+const RoleProtectedRoute = ({ 
+  children, 
+  roles 
+}: { 
+  children: React.ReactNode;
+  roles: Role[];
+}) => {
+  const { isAuthenticated, user } = useAuthStore();
+  
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!user || !roles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return <>{children}</>;
 };
 
@@ -65,9 +89,39 @@ function App() {
                   <Route path="/notifications" element={<NotificationsPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/profile/settings" element={<ProfileSettingsPage />} />
+                  
+                  {/* ============================================ */}
+                  {/* INSIGHTS ROUTES */}
+                  {/* ============================================ */}
+                  
+                  {/* Existing insights routes */}
                   <Route path="/exams/:examId/insights" element={<TeacherInsightsPage />} />
                   <Route path="/my-performance" element={<StudentInsightsPage />} />
                   <Route path="/courses/:courseId/insights" element={<CourseInsightsPage />} />
+                  
+                  {/* NEW: Comprehensive Insights Dashboard (all roles) */}
+                  <Route path="/insights" element={<InsightsPage />} />
+                  
+                  {/* NEW: Item Analysis - Research-based psychometric analysis (Faculty/Admin only) */}
+                  <Route 
+                    path="/exams/:examId/item-analysis" 
+                    element={
+                      <RoleProtectedRoute roles={[Role.ADMIN, Role.FACULTY]}>
+                        <ItemAnalysisPage />
+                      </RoleProtectedRoute>
+                    } 
+                  />
+                  
+                  {/* NEW: Detailed Student Insights - View specific student (Faculty/Admin only) */}
+                  <Route 
+                    path="/insights/student/:studentId" 
+                    element={
+                      <RoleProtectedRoute roles={[Role.ADMIN, Role.FACULTY]}>
+                        <StudentDetailInsightsPage />
+                      </RoleProtectedRoute>
+                    } 
+                  />
+                  
                 </Routes>
               </Layout>
             </ProtectedRoute>

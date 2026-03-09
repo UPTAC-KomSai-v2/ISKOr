@@ -43,6 +43,65 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
   }
 });
 
+router.get(
+  '/:id/statistics',
+  authenticate,
+  authorize(Role.ADMIN, Role.FACULTY),
+  async (req: Request, res: Response) => {
+    try {
+      const exam = await Exam.findById(req.params.id);
+      if (!exam) {
+        return res.status(404).json({ error: 'Exam not found' });
+      }
+
+      const submissions = await ExamSubmission.find({
+        examId: exam._id,
+        status: { $in: ['SUBMITTED', 'GRADED', 'RETURNED'] },
+      }).populate('studentId', 'firstName lastName studentNumber');
+
+      if (submissions.length === 0) {
+        return res.json({
+          totalSubmissions: 0,
+          averageScore: 0,
+          highestScore: 0,
+          lowestScore: 0,
+          passingCount: 0,
+          passingRate: 0,
+          highestScorer: null,
+        });
+      }
+
+      const scores = submissions.map((s) => s.percentage);
+      const passingCount = submissions.filter((s) => s.isPassing).length;
+      
+      // Find the highest scorer
+      const highestSubmission = submissions.reduce((best, current) => 
+        current.percentage > best.percentage ? current : best
+      );
+      
+      const highestStudent = highestSubmission.studentId as any;
+
+      res.json({
+        totalSubmissions: submissions.length,
+        averageScore: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
+        highestScore: Math.max(...scores),
+        lowestScore: Math.min(...scores),
+        passingCount,
+        passingRate: Math.round((passingCount / submissions.length) * 100),
+        // NEW: Include highest scorer info
+        highestScorer: {
+          name: `${highestStudent.firstName} ${highestStudent.lastName}`,
+          studentNumber: highestStudent.studentNumber,
+          score: highestSubmission.percentage,
+        },
+      });
+    } catch (error) {
+      console.error('Error getting exam statistics:', error);
+      res.status(500).json({ error: 'Failed to get exam statistics' });
+    }
+  }
+);
+
 // Get upcoming exams for dashboard - FIXED
 router.get('/upcoming', authenticate, async (req: Request, res: Response) => {
   try {

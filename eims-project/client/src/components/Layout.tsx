@@ -7,7 +7,7 @@ import { Role } from '@/types';
 import {
   LayoutDashboard, BookOpen, FileText, ClipboardList,
   Megaphone, Users, Bell, LogOut, Menu, X, Wifi, WifiOff,
-  User, Settings, ChevronDown, Award,
+  User, Settings, ChevronDown, Award, Brain,
 } from 'lucide-react';
 import IskorLogo from './Iskor.png';
 
@@ -60,6 +60,7 @@ const Layout = ({ children }: LayoutProps) => {
     { name: 'Exams', href: '/exams', icon: FileText, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
     { name: 'Results', href: '/results', icon: ClipboardList, roles: [Role.STUDENT] },
     { name: 'My Performance', href: '/my-performance', icon: Award, roles: [Role.STUDENT] },
+    { name: 'Insights', href: '/insights', icon: Brain, roles: [Role.ADMIN, Role.FACULTY] }, // NEW: Insights for teachers
     { name: 'Announcements', href: '/announcements', icon: Megaphone, roles: [Role.ADMIN, Role.FACULTY, Role.STUDENT] },
     { name: 'Users', href: '/users', icon: Users, roles: [Role.ADMIN] },
   ].filter((item) => item.roles.includes(user?.role as Role));

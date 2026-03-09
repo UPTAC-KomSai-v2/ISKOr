@@ -8,6 +8,7 @@ import ExamScheduler, { ExamScheduleSettings } from '@/components/ExamScheduler'
 import { Plus, Search, FileText, Calendar, Edit, Trash2, Clock, MapPin, Eye, Play, Pause, Users, Loader2, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+
 const ExamsPage = () => {
   const { user } = useAuthStore();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -467,7 +468,7 @@ const ExamsPage = () => {
                     {/* View Insights - for exams with submissions */}
                     {['ACTIVE', 'CLOSED', 'GRADING', 'COMPLETED'].includes(exam.status) && (
                       <button
-                        onClick={() => navigate(`/exams/${exam._id}/insights`)}
+                        onClick={() => navigate(`/exams/${exam._id}/item-analysis`)}
                         className="btn btn-secondary text-sm py-1.5 flex items-center gap-1"
                         title="View Insights"
                       >

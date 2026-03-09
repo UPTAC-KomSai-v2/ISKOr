@@ -195,4 +195,23 @@ export const usersApi = {
   createBulk: (users: any[]) => api.post('/users/bulk', { users }),
 };
 
+export const insightsApi = {
+  // Get comprehensive insights dashboard data
+  getComprehensive: (courseId?: string) => {
+    const params = courseId ? `?courseId=${courseId}` : '';
+    return api.get(`/insights/comprehensive${params}`);
+  },
+  
+  // Get item analysis for an exam (based on ExamSoft methodology)
+  getItemAnalysis: (examId: string) => {
+    return api.get(`/insights/exam/${examId}/item-analysis`);
+  },
+  
+  // Get detailed student insights
+  getStudentInsights: (studentId: string, courseId?: string) => {
+    const params = courseId ? `?courseId=${courseId}` : '';
+    return api.get(`/insights/student/${studentId}${params}`);
+  }
+};
+
 export default api;
