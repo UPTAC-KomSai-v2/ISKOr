@@ -197,18 +197,7 @@ const ItemAnalysisPage = () => {
         </div>
       </div>
 
-      {/* Methodology Attribution */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
-        <FileText className="w-5 h-5 text-blue-600 mt-0.5" />
-        <div>
-          <h3 className="font-medium text-blue-900">Research-Based Methodology</h3>
-          <p className="text-sm text-blue-700 mt-1">
-            This analysis uses Classical Test Theory (CTT) methodology based on the{' '}
-            <span className="font-medium">ExamSoft White Paper: "Exam Quality Through the Use of Psychometric Analysis"</span>
-            {' '}by Ohio State University College of Medicine.
-          </p>
-        </div>
-      </div>
+      
 
       {/* Interpretation Guide Modal */}
       {showGuide && data.interpretationGuide && (
