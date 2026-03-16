@@ -53,6 +53,7 @@ interface GradeDistribution {
   grade: string;
   count: number;
   percentage: number;
+  remark?: string;
 }
 
 interface TopPerformer {
@@ -89,11 +90,17 @@ interface CourseInsights {
 }
 
 const GRADE_COLORS: Record<string, string> = {
-  A: '#22c55e',
-  B: '#3b82f6',
-  C: '#eab308',
-  D: '#f97316',
-  F: '#ef4444',
+  '1.0':  '#065f46',  // dark green - Excellent
+  '1.25': '#059669',  // green - Excellent
+  '1.5':  '#10b981',  // emerald - Very Good
+  '1.75': '#34d399',  // light emerald - Very Good
+  '2.0':  '#3b82f6',  // blue - Good
+  '2.25': '#60a5fa',  // light blue - Good
+  '2.5':  '#f59e0b',  // amber - Satisfactory
+  '2.75': '#fbbf24',  // yellow - Satisfactory
+  '3.0':  '#f97316',  // orange - Passed
+  '4.0':  '#ef4444',  // red - Conditional Failure
+  '5.0':  '#991b1b',  // dark red - Failed
 };
 
 const CourseInsightsPage = () => {
@@ -279,15 +286,35 @@ const CourseInsightsPage = () => {
                   <ResponsiveContainer width="60%" height={250}>
                     <PieChart>
                       <Pie
-                        data={gradeDistribution.filter(g => g.count > 0)}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        paddingAngle={2}
-                        dataKey="count"
-                        nameKey="grade"
-                        label={({ grade, percentage }) => `${grade}: ${percentage}%`}
+                          data={gradeDistribution.filter(g => g.count > 0)}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={2}
+                          dataKey="count"
+                          nameKey="grade"
+                          label={({ cx, cy, midAngle, innerRadius, outerRadius, grade, percentage }) => {
+                            if (percentage < 8) return null; // skip small slices
+                            const RADIAN = Math.PI / 180;
+                            const radius = innerRadius + (outerRadius - innerRadius) / 2;
+                            const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                            const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                            return (
+                              <text
+                                x={x}
+                                y={y}
+                                fill="#fff"
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                fontSize={10}
+                                fontWeight={600}
+                              >
+                                {grade}
+                              </text>
+                            );
+                          }}
+                          labelLine={false}
                       >
                         {gradeDistribution.filter(g => g.count > 0).map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={GRADE_COLORS[entry.grade]} />
@@ -304,7 +331,10 @@ const CourseInsightsPage = () => {
                             className="w-3 h-3 rounded-full"
                             style={{ backgroundColor: GRADE_COLORS[item.grade] }}
                           />
-                          <span className="font-medium text-gray-700">Grade {item.grade}</span>
+                          <span className="font-medium text-gray-700">{item.grade}</span>
+                          {item.remark && (
+                            <span className="text-xs text-gray-400">({item.remark})</span>
+                          )}
                         </div>
                         <div className="text-right">
                           <span className="font-semibold text-gray-900">{item.count}</span>

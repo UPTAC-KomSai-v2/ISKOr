@@ -1267,13 +1267,19 @@ router.get('/course/:courseId', authenticate, authorize(Role.ADMIN, Role.FACULTY
       };
     }).filter(e => e.submissionCount > 0);
 
-    // Grade distribution (A, B, C, D, F)
+    // Grade distribution (UP 1.0–5.0 scale)
     const gradeRanges = [
-      { grade: 'A', min: 90, max: 100 },
-      { grade: 'B', min: 80, max: 89 },
-      { grade: 'C', min: 70, max: 79 },
-      { grade: 'D', min: 60, max: 69 },
-      { grade: 'F', min: 0, max: 59 }
+      { grade: '1.0',  min: 98, max: 100, remark: 'Excellent' },
+      { grade: '1.25', min: 94, max: 97,  remark: 'Excellent' },
+      { grade: '1.5',  min: 90, max: 93,  remark: 'Very Good' },
+      { grade: '1.75', min: 85, max: 89,  remark: 'Very Good' },
+      { grade: '2.0',  min: 80, max: 84,  remark: 'Good' },
+      { grade: '2.25', min: 75, max: 79,  remark: 'Good' },
+      { grade: '2.5',  min: 70, max: 74,  remark: 'Satisfactory' },
+      { grade: '2.75', min: 65, max: 69,  remark: 'Satisfactory' },
+      { grade: '3.0',  min: 60, max: 64,  remark: 'Passed' },
+      { grade: '4.0',  min: 50, max: 59,  remark: 'Conditional Failure' },
+      { grade: '5.0',  min: 0,  max: 49,  remark: 'Failed' },
     ];
 
     const gradeDistribution = gradeRanges.map(range => {
